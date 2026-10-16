@@ -1058,6 +1058,8 @@
       }
     }
     lastPath = location.pathname;
+    // When embedded in the prep hub (adityamalu.github.io/prep/), tell it where we are so its share links follow along.
+    if (window.parent !== window) window.parent.postMessage({ type: "hub:path", path: location.pathname }, "https://adityamalu.github.io");
     const m = location.pathname.match(/^\/p\/([a-z0-9-]+)\/?$/);
     try {
       if (m) {

@@ -1,44 +1,48 @@
 :root {
-  --bg: #0b1020;
-  --surface: #121a2e;
-  --surface-2: #18223a;
-  --border: #243150;
-  --text: #e6ebf5;
-  --muted: #8a97b3;
-  --accent: #22c55e;
-  --accent-ink: #052e16;
-  --accent-soft: rgba(34, 197, 94, 0.12);
-  --easy: #34d399;
-  --medium: #fbbf24;
-  --hard: #f87171;
-  --pass: #22c55e;
-  --fail: #f87171;
-  --link: #7dd3fc;
-  --code-bg: #0e1527;
+  /* palette and type shared with AlgoScope and the Java/DB Concepts Steppers */
+  --bg: #0f151b;
+  --surface: #161e26;
+  --surface-2: #1b2530;
+  --border: #2a3642;
+  --text: #e3eaf0;
+  --muted: #93a2b0;
+  --accent: #5cb3ef;
+  --accent-ink: #0f151b;
+  --accent-soft: #16334a;
+  --easy: #3ccf98;
+  --medium: #f0b84a;
+  --hard: #ff7b6e;
+  --pass: #3ccf98;
+  --fail: #ff7b6e;
+  --link: #5cb3ef;
+  --code-bg: #121a22;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   --radius: 14px;
-  --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", Consolas, monospace;
-  --sans: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --display: "Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif;
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --bg: #f5f7fb;
+    --bg: #eef2f5;
     --surface: #ffffff;
-    --surface-2: #eef2f8;
-    --border: #d9e0ec;
-    --text: #0f172a;
-    --muted: #5b6780;
-    --accent: #16a34a;
-    --accent-ink: #f0fdf4;
-    --accent-soft: rgba(22, 163, 74, 0.10);
-    --easy: #059669;
-    --medium: #b45309;
-    --hard: #dc2626;
-    --link: #0369a1;
-    --code-bg: #f1f4f9;
-    --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+    --surface-2: #f4f7f9;
+    --border: #d8e0e7;
+    --text: #15202b;
+    --muted: #5a6977;
+    --accent: #0b6aa8;
+    --accent-ink: #ffffff;
+    --accent-soft: #dcecf7;
+    --easy: #0a8a5f;
+    --medium: #b7790a;
+    --hard: #c43c3c;
+    --pass: #0a8a5f;
+    --fail: #c43c3c;
+    --link: #0b6aa8;
+    --code-bg: #f7f9fb;
+    --shadow: 0 10px 30px rgba(21, 32, 43, 0.08);
     color-scheme: light;
   }
 }
@@ -66,6 +70,7 @@ a:hover { text-decoration: underline; }
   background: var(--surface);
   position: sticky; top: 0; z-index: 5;
 }
+h1, h2, h3, .brand { font-family: var(--display); letter-spacing: -0.01em; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); font-size: 17px; }
 .brand:hover { text-decoration: none; }
 .logo { display: inline-flex; }
@@ -135,7 +140,7 @@ input[type="search"]:focus, select:focus, .btn:focus-visible { outline: 2px soli
   width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
   background: var(--accent-soft); color: var(--accent); flex: none;
 }
-.card-icon.debug { background: rgba(248, 113, 113, .12); color: var(--hard); }
+.card-icon.debug { background: color-mix(in srgb, var(--hard) 14%, transparent); color: var(--hard); }
 .card h3 { margin: 0; font-size: 16px; }
 .card .kind { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 .card p { margin: 0; color: var(--muted); font-size: 14px; flex: 1; }
