@@ -128,6 +128,10 @@
     const available = state.projects.filter((p) => hasLang(p.id));
     const solved = available.filter((p) => statusOf(p.id) === "solved").length;
     progressPill.textContent = `${solved} / ${available.length} solved in ${LANG_NAMES[state.lang]}`;
+    // the prep hub shows this on its "Your progress" panel
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: "hub:progress", solved, total: available.length, lang: LANG_NAMES[state.lang] }, "https://adityamalu.github.io");
+    }
   }
 
   function setupLanguagePicker() {
