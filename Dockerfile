@@ -39,6 +39,10 @@ RUN javac -d /app/classes server/LabServer.java
 # the pinned Spring Boot jars (testkit/spring/libs.lock, SHA-256 checked); runs never touch the network
 ENV LAB_SPRING_LIBS=/opt/spring-libs
 RUN java -cp /app/classes LabServer fetch-spring
+# the C++ track's seccomp filter as a JVM agent: Spring runs need it because Spring can't work under a
+# security manager strict enough to contain submitted code on its own (testkit/spring/jvmsandbox.cpp)
+ENV LAB_JVM_SANDBOX=/opt/labsandbox/libjvmsandbox.so
+RUN mkdir -p /opt/labsandbox && g++ -O2 -shared -fPIC -o "$LAB_JVM_SANDBOX" testkit/spring/jvmsandbox.cpp
 
 # fill the compile caches so even the first run after a restart is fast: the C++ kit objects and
 # precompiled header (/opt/cppkit), and the Go build cache (/opt/gocache, written as the runner user)

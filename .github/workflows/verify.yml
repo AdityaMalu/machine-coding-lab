@@ -90,6 +90,29 @@ jobs:
         run: |
           code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "localhost:8080/api/run/notes-api?lang=spring"             -H 'Content-Type: application/json' --data-binary '{"notes/X.java":"package notes; class X {}"}')
           [ "$code" = "403" ] || { echo "::error::expected 403, got $code"; exit 1; }
+      - name: JVM seccomp agent blocks trusted code too
+        run: |
+          out=$(docker run --rm -e LAB_SANDBOX=1 -v "$PWD/.github/sandbox-probes:/probes:ro" build-lab             sh -c 'java -agentpath:$LAB_JVM_SANDBOX /probes/JvmProbe.java' 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q "PROBE ALLOWED\|PROBE BROKEN" && { echo "::error::JVM agent gap"; exit 1; }
+          [ "$(echo "$out" | grep -c 'PROBE BLOCKED')" -ge 3 ] || { echo "::error::JVM probes did not all run"; exit 1; }
+          echo "$out" | grep -q "PROBE OK" || { echo "::error::JVM agent broke normal work"; exit 1; }
+      - name: Submitted Spring code is contained (opt-in server)
+        run: |
+          docker run -d --name lab-spring -e LAB_SPRING_USER_CODE=1 -p 8082:8080 build-lab
+          for i in $(seq 1 60); do curl -sf localhost:8082/api/config > /dev/null && break; sleep 2; done
+          S=projects/notes-api/spring/starter/src
+          files='{}'
+          for f in $(cd "$S" && find . -type f | sed 's|^\./||'); do
+            files=$(jq --arg k "$f" --rawfile v "$S/$f" '. + {($k): $v}' <<< "$files")
+          done
+          files=$(jq --rawfile v .github/sandbox-probes/SpringProbe.java '. + {"notes/SpringProbe.java": $v}' <<< "$files")
+          echo "$files" > spring-probe.json
+          out=$(curl -sf -X POST "localhost:8082/api/run/notes-api?lang=spring" -H 'Content-Type: application/json'             --data-binary @spring-probe.json | jq -r '.output')
+          echo "$out" | grep "PROBE\|Run stats" || echo "$out" | head -n 40
+          echo "$out" | grep -q "PROBE ALLOWED\|PROBE BROKEN" && { echo "::error::sandbox gap in spring"; exit 1; }
+          [ "$(echo "$out" | grep -c 'PROBE BLOCKED')" -ge 5 ] || { echo "::error::spring probes did not all run"; exit 1; }
+          echo "$out" | grep -q "PROBE OK" || { echo "::error::spring could not use its own temp dir"; exit 1; }
       - name: Spring Boot under Render's free-tier limits (512 MB, 0.1 CPU)
         run: |
           docker run -d --name lab-small --memory=512m --memory-swap=512m --cpus=0.1 -p 8081:8080 build-lab

@@ -689,9 +689,7 @@ public class LabServer {
         if (!Files.isDirectory(lr.resolve("starter/src"))) throw new HttpError(404, "not available in " + lang + " yet");
         if (!availableLangs().contains(lang)) throw new HttpError(503, lang + " is not installed on this server");
         boolean solution = mode.equals("solution");
-        if (lang.equals("spring") && !solution && !"1".equals(System.getenv("LAB_SPRING_USER_CODE"))) {
-            // Spring isn't built for the security manager, so it alone can't contain submitted code;
-            // until runs get an OS-level sandbox, the site only runs the reference solution (docs/SPRING_TRACK_PLAN.md)
+        if (lang.equals("spring") && !solution && !springUserCodeAllowed()) {
             throw new HttpError(403, "Spring Boot is in preview here: only the reference solution runs on this server for now.");
         }
         Map<String, String> files = solution ? Map.of() : parseFlatJson(readBody(ex, 1_000_000));
@@ -1050,6 +1048,8 @@ public class LabServer {
             cmd.add("-Djava.security.manager=default");
             cmd.add("-Djava.security.policy==" + policy);
             cmd.add("-Djava.io.tmpdir=" + tmp);
+            Path agent = jvmSandbox();
+            if (agent != null) cmd.add(1, "-agentpath:" + agent); // kernel-level filter, see testkit/spring/jvmsandbox.cpp
             timeout = 90;
         }
         cmd.add("testkit.SpringRunner");
@@ -1077,6 +1077,24 @@ public class LabServer {
                 + "  permission java.lang.RuntimePermission \"getProtectionDomain\";\n"
                 + "  permission java.lang.reflect.ReflectPermission \"suppressAccessChecks\";\n"
                 + "};\n";
+    }
+
+    /** The JVM seccomp agent (LAB_JVM_SANDBOX, built in the Dockerfile), or null. */
+    static Path jvmSandbox() {
+        String env = System.getenv("LAB_JVM_SANDBOX");
+        if (env == null || env.isBlank()) return null;
+        Path p = Paths.get(env);
+        return Files.isRegularFile(p) ? p : null;
+    }
+
+    /**
+     * Submitted Spring code runs only when the operator opts in (LAB_SPRING_USER_CODE=1) and, on a Linux host
+     * with the OS sandbox, the JVM seccomp agent is there: Spring needs its jars fully trusted under the
+     * security manager, so the security manager alone can't contain it (docs/SPRING_TRACK_PLAN.md).
+     */
+    static boolean springUserCodeAllowed() {
+        if (!"1".equals(System.getenv("LAB_SPRING_USER_CODE"))) return false;
+        return !sandboxReady() || jvmSandbox() != null;
     }
 
     /** Copies non-Java files (application.properties) from a source tree into a class output root. */
