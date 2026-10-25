@@ -4,9 +4,9 @@ Goal: learn Spring Boot by building and fixing real Spring apps in the lab, the 
 teach concurrency: a spec, starter code, a test suite you make pass, and a reference solution. The Java
 Concepts Stepper (Part 5) explains how Spring works; this track is where you write it.
 
-Status (2026-10-25): **phase 0 spike done, all three gates passed on Render** (section 3). Spring Boot 4.1.2.
-The Spring Boot language and the Notes API project are live but hidden: open the lab with `?preview=spring`.
-On the hosted site only the reference solution runs until `LAB_SPRING_USER_CODE=1` is set.
+Status (2026-10-25): **phases 0-2 done.** Spring Boot 4.1.2. Three projects are live but hidden (open the
+lab with `?preview=spring`): Notes API, App Won't Start and Orders with JPA. On the hosted site only the
+reference solutions run until `LAB_SPRING_USER_CODE=1` is set. Phase 2 results: section 3, "Phase 2".
 
 ## 1. How it fits the lab
 
@@ -75,6 +75,42 @@ File reads still rely on the `runner` user's permissions, the same as the C++ tr
 **Next decision:** set `LAB_SPRING_USER_CODE=1` in the Render dashboard to let visitors run their own Spring
 code. CI's opt-in server already runs submitted code with every probe blocked.
 
+### Phase 2 (2026-10-25): App Won't Start and Orders with JPA
+
+**Jar stacks.** JPA, Hibernate and H2 (35 jars) must not sit on every project's class path: Spring Boot would
+auto-configure a database for the Notes API too. `testkit/spring/libs.lock` has an optional third column, the
+stack (`jpa`); a project lists the stacks it needs in `projects/<id>/spring/stack`. Jars without a stack go
+to every project.
+
+**One CDS archive per project** (`<LAB_SPRING_CDS>/<id>.jsa`, built in the Dockerfile from that project's
+solution run). A first attempt merged class lists per stack, which meant dropping their lambda call-site
+lines, and that lost much of the gain (Notes API JVM time under the CI limits went from ~24 s to ~41 s).
+Archives: about 60 MB each, 118 MB for the JPA project.
+
+**Security manager.** Hibernate's lazy-loading proxies are also generated in the user's package, so user
+code needed one more permission, `accessDeclaredMembers` (listing members by reflection). The seccomp agent
+stays the main barrier.
+
+**Run timeout** for Spring raised from 90 s to 150 s: Hibernate apps start slowly on a small CPU share.
+
+**Live Render (reference solutions):**
+
+| Project | Tests | Wall time | JVM (context + tests) | Container peak |
+|---|---|---|---|---|
+| Notes API | 19 | 37-44 s warm | 25-27 s | ~330 MB |
+| App Won't Start | 16 | 37 s warm, 59 s cold | 25-26 s | ~260 MB |
+| Orders with JPA | 16 | 54-64 s | 43-54 s | **512 MB** (see below) |
+
+Orders with JPA passes, but the container's memory peak reached the 512 MB limit. That figure includes page
+cache (the 118 MB CDS archive and the jars are read from disk), which the kernel drops under pressure, and
+no run failed or got OOM-killed. Anonymous memory is about 400 MB (test JVM RSS ~245 MB plus the server).
+If later JPA projects push it further: drop `LAB_SPRING_HEAP` from 160m to 128m (heap peak is 73 MB), or move
+Spring runs to the Oracle worker.
+
+Learner-facing output: a failed startup now shows Spring Boot's own "APPLICATION FAILED TO START"
+analysis (the conditions report is switched off with `spring.test.print-condition-evaluation-report=false`),
+and each failing test says "The app failed to start: <root cause>".
+
 ### The original gates
 
 | Gate | Pass if |
@@ -119,7 +155,7 @@ oauth2-resource-server (8 only), cache; H2; spring-boot-test + AssertJ + MockMvc
 |---|---|---|
 | 0. Spike | project 1 minimal, runner hacked in, deployed to Render, the three gates measured | go / no-go decided, numbers written into this doc |
 | 1. Runner | section 2 in full: lockfile + fetch, `runSpring`, JUnit listener, Dockerfile, CI verify + probes, picker, code intel | `lab.ps1 verify` passes locally and in CI; a hosted run shows per-test results |
-| 2. First projects | 1, 2, 3 (spec, starter, tests, solution) | each solution passes, each starter fails for the right reason |
+| 2. First projects (**done**) | 1, 2, 3 (spec, starter, tests, solution) | each solution passes, each starter fails for the right reason |
 | 3. Core projects | 4, 5, 6 | same, and project 5's tests fail reliably on a racy solution (run 20 times) |
 | 4. Finish | 7, 8, 9; README table and project count; stepper Part 5 "Practice this" links; hub progress counts Spring | the track is visible on the hosted site (or in local mode if the spike said so) |
 
@@ -134,8 +170,10 @@ oauth2-resource-server (8 only), cache; H2; spring-boot-test + AssertJ + MockMvc
 ## 7. Updating the Spring jars
 
 1. Write a throwaway `pom.xml` with `spring-boot-starter-parent` at the new version and the starters the
-   projects use (today: `webmvc`, `validation`, `webmvc-test`, plus `junit-platform-launcher`).
+   projects use (today: `webmvc`, `validation`, `webmvc-test`, `data-jpa`, `data-jpa-test`, `h2`, plus
+   `junit-platform-launcher`).
 2. `mvn dependency:copy-dependencies -DincludeScope=test` and `mvn dependency:list -DincludeScope=test`.
-3. Rebuild `testkit/spring/libs.lock`: one `groupId:artifactId:version sha256` line per jar.
+   Resolve once without the JPA starters too, to tell which jars belong to the `jpa` stack.
+3. Rebuild `testkit/spring/libs.lock`: one `groupId:artifactId:version sha256 [stack]` line per jar.
 4. `java server/LabServer.java fetch-spring`, then run every Spring solution and starter (CI does too).
    Maven is only needed for step 2, never by the lab or its users.
