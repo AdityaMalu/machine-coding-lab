@@ -36,6 +36,10 @@ EXPOSE 8080
 # compiled once here instead of on every start (each queued run starts a JVM in its own container)
 RUN javac -d /app/classes server/LabServer.java
 
+# the pinned Spring Boot jars (testkit/spring/libs.lock, SHA-256 checked); runs never touch the network
+ENV LAB_SPRING_LIBS=/opt/spring-libs
+RUN java -cp /app/classes LabServer fetch-spring
+
 # fill the compile caches so even the first run after a restart is fast: the C++ kit objects and
 # precompiled header (/opt/cppkit), and the Go build cache (/opt/gocache, written as the runner user)
 # with everything each project's test binary needs

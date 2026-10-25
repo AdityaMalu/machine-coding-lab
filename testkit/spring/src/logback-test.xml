@@ -1,0 +1,8 @@
+<!-- Quiet test logs: warnings and errors only. A project's application.properties can still set logging.level.* -->
+<configuration>
+  <appender name="OUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder><pattern>%-5level %logger{30} - %msg%n</pattern></encoder>
+  </appender>
+  <logger name="org.springframework.web.servlet.mvc.support.DefaultHandlerExceptionResolver" level="ERROR"/>
+  <root level="WARN"><appender-ref ref="OUT"/></root>
+</configuration>

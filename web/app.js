@@ -8,8 +8,8 @@
   const toastEl = document.getElementById("toast");
 
   const DIFF_ORDER = { Easy: 0, Medium: 1, Hard: 2 };
-  const LANG_NAMES = { java: "Java", python: "Python", go: "Go", cpp: "C++" };
-  const LANG_SHORT = { java: "Java", python: "Py", go: "Go", cpp: "C++" };
+  const LANG_NAMES = { java: "Java", python: "Python", go: "Go", cpp: "C++", spring: "Spring Boot" };
+  const LANG_SHORT = { java: "Java", python: "Py", go: "Go", cpp: "C++", spring: "Spring" };
   const state = {
     hosted: false, // hosted site: code + progress live in this browser, not on the server
     projects: [],
@@ -136,7 +136,7 @@
 
   function setupLanguagePicker() {
     const sel = document.getElementById("langSel");
-    sel.innerHTML = Object.entries(LANG_NAMES).map(([k, v]) => {
+    sel.innerHTML = Object.entries(LANG_NAMES).filter(([k]) => k !== "spring" || state.preview).map(([k, v]) => {
       const count = state.projects.filter((p) => (state.projectLangs[p.id] || ["java"]).includes(k)).length;
       const missing = !state.serverLangs.includes(k);
       return `<option value="${k}"${missing ? " disabled" : ""}>${v} · ${count} projects${missing ? " (not installed)" : ""}</option>`;
@@ -164,9 +164,12 @@
     const config = await api("/api/config").catch(() => ({ mode: "local", langs: ["java"] }));
     state.hosted = config.mode === "hosted";
     state.serverLangs = config.langs || ["java"];
+    // Spring Boot is a preview track: only shown with ?preview=spring (docs/SPRING_TRACK_PLAN.md)
+    state.preview = new URLSearchParams(location.search).get("preview") === "spring";
+    if (!state.preview) state.serverLangs = state.serverLangs.filter((l) => l !== "spring");
     if (state.hosted) migrateStorage();
     const data = await api("/api/projects");
-    state.projects = data.projects;
+    state.projects = data.projects.filter((p) => state.preview || !p.preview);
     state.projectLangs = data.languages || {};
     state.progress = state.hosted ? lsGet("buildlab.progress", {}) || {} : data.progress || {};
     const saved = lsGet("buildlab.lang", "java");
@@ -602,7 +605,7 @@
     const ta = document.getElementById("editor");
     if (window.CodeMirror) {
       d.cm = window.CodeMirror.fromTextArea(ta, {
-        mode: { java: "text/x-java", python: "python", go: "go", cpp: "text/x-c++src" }[state.lang],
+        mode: { java: "text/x-java", python: "python", go: "go", cpp: "text/x-c++src", spring: "text/x-java" }[state.lang],
         theme: matchMedia("(prefers-color-scheme: light)").matches ? "default" : "material-darker",
         lineNumbers: true,
         indentUnit: 4,

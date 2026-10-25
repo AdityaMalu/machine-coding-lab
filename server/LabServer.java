@@ -47,7 +47,7 @@ import java.util.stream.Stream;
  */
 public class LabServer {
 
-    static final List<String> LANGS = List.of("java", "python", "go", "cpp");
+    static final List<String> LANGS = List.of("java", "python", "go", "cpp", "spring");
 
     static Path root;
     static Path projects;
@@ -128,6 +128,10 @@ public class LabServer {
 
         if (args.length >= 2 && args[0].equals("test")) {
             cli(args[1], args.length >= 3 ? args[2] : "workspace", args.length >= 4 ? args[3] : "java");
+            return;
+        }
+        if (args.length >= 1 && args[0].equals("fetch-spring")) { // download the pinned Spring jars once
+            fetchSpring();
             return;
         }
         if (args.length >= 1 && args[0].equals("warmup")) { // Docker build: fill the compile caches once
@@ -313,6 +317,7 @@ public class LabServer {
                 Matcher s = Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(t.group(1));
                 while (s.find()) tags.add(unjson(s.group(1)));
             }
+            if (o.matches("(?s).*\"preview\"\\s*:\\s*true.*")) continue; // not listed or indexed until it's ready
             out.add(new ProjectMeta(field(o, "id"), field(o, "title"), field(o, "difficulty"), field(o, "kind"),
                     field(o, "summary"), tags));
         }
@@ -419,7 +424,7 @@ public class LabServer {
     }
 
     static List<String> langNames(String id) {
-        Map<String, String> names = Map.of("java", "Java", "python", "Python", "go", "Go", "cpp", "C++");
+        Map<String, String> names = Map.of("java", "Java", "python", "Python", "go", "Go", "cpp", "C++", "spring", "Spring Boot");
         return langsOf(id).stream().map(names::get).toList();
     }
 
@@ -498,12 +503,14 @@ public class LabServer {
         if (tool("python") != null) out.add("python");
         if (tool("go") != null) out.add("go");
         if (tool("g++") != null) out.add("cpp");
+        if (springLibs() != null) out.add("spring");
         return out;
     }
 
     static boolean editable(String lang, String name) {
         return switch (lang) {
             case "java" -> name.endsWith(".java");
+            case "spring" -> name.endsWith(".java") || name.endsWith(".properties");
             case "python" -> name.endsWith(".py");
             case "go" -> name.endsWith(".go");
             case "cpp" -> name.endsWith(".cpp") || name.endsWith(".hpp") || name.endsWith(".h");
@@ -515,6 +522,8 @@ public class LabServer {
     static boolean validUploadName(String lang, String name) {
         return switch (lang) {
             case "java" -> name.matches("[a-z][a-z0-9]*(/[A-Za-z_][A-Za-z0-9_]*)*\\.java");
+            case "spring" -> name.matches("[a-z][a-z0-9]*(/[A-Za-z_][A-Za-z0-9_]*)*\\.java")
+                    || name.matches("application(-[a-z0-9]+)?\\.properties");
             case "python" -> name.matches("[a-z_][a-z0-9_]*(/[a-z_][a-z0-9_]*)*\\.py");
             case "go" -> name.matches("[a-z][a-z0-9_]*/[a-z][a-z0-9_]*\\.go") && !name.endsWith("_test.go");
             case "cpp" -> name.matches("[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*)*\\.(cpp|hpp|h)");
@@ -680,6 +689,11 @@ public class LabServer {
         if (!Files.isDirectory(lr.resolve("starter/src"))) throw new HttpError(404, "not available in " + lang + " yet");
         if (!availableLangs().contains(lang)) throw new HttpError(503, lang + " is not installed on this server");
         boolean solution = mode.equals("solution");
+        if (lang.equals("spring") && !solution && !"1".equals(System.getenv("LAB_SPRING_USER_CODE"))) {
+            // Spring isn't built for the security manager, so it alone can't contain submitted code;
+            // until runs get an OS-level sandbox, the site only runs the reference solution (docs/SPRING_TRACK_PLAN.md)
+            throw new HttpError(403, "Spring Boot is in preview here: only the reference solution runs on this server for now.");
+        }
         Map<String, String> files = solution ? Map.of() : parseFlatJson(readBody(ex, 1_000_000));
         if (!solution) {
             if (files.isEmpty() || files.size() > 30) throw new IllegalArgumentException("send 1..30 files");
@@ -757,6 +771,10 @@ public class LabServer {
     static final Pattern JAVA_TEST = Pattern.compile(
             "@Test\\b(?:\\s*\\(\\s*(?:value\\s*=\\s*)?(?:\"((?:[^\"\\\\]|\\\\.)*)\")?[^)]*\\))?");
     static final Pattern JAVA_METHOD = Pattern.compile("void\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(");
+    static final Pattern SPRING_TEST = Pattern.compile(
+            "((?:@[A-Za-z_][A-Za-z0-9_.]*(?:\\((?:[^()\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\))?\\s*)+)"
+            + "(?:public\\s+|protected\\s+)?void\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(");
+    static final Pattern SPRING_DISPLAY = Pattern.compile("@DisplayName\\(\\s*\"((?:[^\"\\\\]|\\\\.)*)\"\\s*\\)");
     static final Pattern PY_CLASS = Pattern.compile("^class\\s+([A-Za-z_][A-Za-z0-9_]*)");
     static final Pattern PY_TEST = Pattern.compile("^\\s*@test\\(\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
     static final Pattern PY_DEF = Pattern.compile("^\\s*def\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(");
@@ -785,6 +803,18 @@ public class LabServer {
                         if (!m.find(a.end())) break;
                         String name = a.group(1) == null ? m.group(1) : unjson(a.group(1));
                         out.add(new TestInfo(suite, m.group(1), name, rel, lineOf(text, m.start())));
+                    }
+                }
+                case "spring" -> { // JUnit 5: @Test plus an optional @DisplayName("...") before the method
+                    if (!fileName.endsWith("Test.java")) continue;
+                    String suite = fileName.replace(".java", "");
+                    Matcher m = SPRING_TEST.matcher(text);
+                    while (m.find()) {
+                        String annotations = m.group(1);
+                        if (!annotations.matches("(?s).*@Test\\b(?!\\w).*")) continue;
+                        Matcher d = SPRING_DISPLAY.matcher(annotations);
+                        String name = d.find() ? unjson(d.group(1)) : m.group(2);
+                        out.add(new TestInfo(suite, m.group(2), name, rel, lineOf(text, m.start(2))));
                     }
                 }
                 case "python" -> {
@@ -884,10 +914,11 @@ public class LabServer {
         deleteTree(out);
         Files.createDirectories(out);
         if (sandbox) openPermissions(out);
-        if (!lang.equals("java") && tool(toolFor(lang)) == null) {
+        if (!lang.equals("java") && !lang.equals("spring") && tool(toolFor(lang)) == null) {
             return compileFailure("The " + lang + " toolchain is not installed here (" + toolFor(lang) + " not found).", 0);
         }
         return switch (lang) {
+            case "spring" -> runSpring(id, src, out, sandbox, only);
             case "python" -> runPython(id, src, out, sandbox, only);
             case "go" -> runGo(id, src, out, sandbox, only);
             case "cpp" -> runCpp(id, src, out, sandbox, only);
@@ -964,6 +995,213 @@ public class LabServer {
         }
         Proc run = exec(sandboxed(cmd, sandbox), timeout, out, sandboxEnv(out, sandbox));
         return parseRunnerOutput(run, timeout, t0, only != null, Map.of());
+    }
+
+    /**
+     * Spring Boot: like Java (kit, tests and user code in separate roots for the security policy), compiled
+     * against the pinned jars in {@link #springLibs()} and run on the JUnit Platform by testkit.SpringRunner.
+     * Non-Java files in the code (application.properties) are copied next to the classes.
+     */
+    static Suite runSpring(String id, Path src, Path out, boolean sandbox, List<String[]> only) throws Exception {
+        Path libs = springLibs();
+        if (libs == null) {
+            return compileFailure("The Spring Boot libraries aren't installed here. Run: java server/LabServer.java fetch-spring", 0);
+        }
+        Path tests = langRoot(id, "spring").resolve("tests/src");
+        Path user = out.resolve("user");
+        Path testOut = out.resolve("tests");
+        Files.createDirectories(user);
+        long t0 = System.currentTimeMillis();
+        String libCp = springClasspath(libs);
+        Path kit = springKitDir();
+
+        List<Path> userSources = listFilesAbs(src, "spring").stream().filter(p -> p.toString().endsWith(".java")).toList();
+        List<String> javacOpts = List.of("-parameters"); // Spring binds @PathVariable / @RequestParam by parameter name
+        String err = userSources.isEmpty() ? "No .java files to compile."
+                : compile(userSources, user, libCp + File.pathSeparator + user, javacOpts);
+        if (err == null) {
+            List<Path> testSources = listFilesAbs(tests, "spring").stream().filter(p -> p.toString().endsWith(".java")).toList();
+            err = compile(testSources, testOut, libCp + File.pathSeparator + kit + File.pathSeparator + user, javacOpts);
+        }
+        if (err != null) return compileFailure(clean(err, src, tests), t0);
+        copyResources(src, user);
+        copyResources(tests, testOut);
+        compiled();
+        if (sandbox) openPermissions(out);
+
+        String java = Paths.get(System.getProperty("java.home"), "bin", win ? "java.exe" : "java").toString();
+        String cp = kit + File.pathSeparator + testOut + File.pathSeparator + libCp + File.pathSeparator + user;
+        String heap = sandbox ? System.getenv().getOrDefault("LAB_SPRING_HEAP", "160m") : "512m";
+        List<String> cmd = new ArrayList<>(List.of(java, "-Xmx" + heap, "-Xss1m", "-XX:+UseSerialGC",
+                "-XX:TieredStopAtLevel=1", "-XX:MaxMetaspaceSize=192m", "-XX:ReservedCodeCacheSize=48m",
+                "-Dspring.main.banner-mode=off", "-cp", cp));
+        Path cds = springCds();
+        if (cds != null) cmd.add(1, "-XX:SharedArchiveFile=" + cds);
+        int timeout = 180;
+        if (sandbox) {
+            Path tmp = out.resolve("tmp");
+            Files.createDirectories(tmp);
+            Path policy = out.resolve("sandbox.policy");
+            Files.writeString(policy, policy(kit, testOut, user, tmp)
+                    + "grant codeBase \"" + libs.toUri() + "-\" { permission java.security.AllPermission; };\n"
+                    + springUserGrant(user));
+            openPermissions(out);
+            cmd.add("-XX:ActiveProcessorCount=2");
+            cmd.add("-Djava.security.manager=default");
+            cmd.add("-Djava.security.policy==" + policy);
+            cmd.add("-Djava.io.tmpdir=" + tmp);
+            timeout = 90;
+        }
+        cmd.add("testkit.SpringRunner");
+        Map<String, String> fqn = new LinkedHashMap<>();
+        for (Path p : listFilesAbs(tests, "spring")) {
+            String rel = tests.relativize(p).toString().replace('\\', '/');
+            if (rel.endsWith("Test.java")) {
+                String name = rel.substring(0, rel.length() - 5).replace('/', '.');
+                fqn.put(name.substring(name.lastIndexOf('.') + 1), name);
+            }
+        }
+        if (only != null) for (String[] t : only) cmd.add(fqn.get(t[0]) + "#" + t[1]);
+        else cmd.addAll(fqn.values());
+        Proc run = exec(sandboxed(cmd, sandbox), timeout, out, sandboxEnv(out, sandbox));
+        return parseRunnerOutput(run, timeout, t0, only != null, Map.of());
+    }
+
+    /**
+     * Extra permissions for user code in Spring projects. Spring's CGLIB proxies (for @Configuration,
+     * @Transactional, @Async ...) are subclasses defined in the user's package, so they run with the
+     * user's permissions, and their static initializers call Spring code that has no doPrivileged blocks.
+     */
+    static String springUserGrant(Path user) {
+        return "grant codeBase \"" + user.toUri() + "-\" {\n"
+                + "  permission java.lang.RuntimePermission \"getProtectionDomain\";\n"
+                + "  permission java.lang.reflect.ReflectPermission \"suppressAccessChecks\";\n"
+                + "};\n";
+    }
+
+    /** Copies non-Java files (application.properties) from a source tree into a class output root. */
+    static void copyResources(Path from, Path to) throws IOException {
+        if (!Files.isDirectory(from)) return;
+        try (Stream<Path> s = Files.walk(from)) {
+            for (Path p : s.filter(p -> Files.isRegularFile(p) && p.toString().endsWith(".properties")).toList()) {
+                Path dest = to.resolve(from.relativize(p).toString());
+                Files.createDirectories(dest.getParent());
+                Files.copy(p, dest, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+    }
+
+    static final String MAVEN_CENTRAL = "https://repo1.maven.org/maven2/";
+
+    /** Folder holding the pinned Spring jars: LAB_SPRING_LIBS, or build/spring-libs. */
+    static Path springLibsDir() {
+        String env = System.getenv("LAB_SPRING_LIBS");
+        return env != null && !env.isBlank() ? Paths.get(env) : root.resolve("build/spring-libs");
+    }
+
+    static volatile Path springLibsReady;
+
+    /** The jar folder, or null until fetch-spring has downloaded exactly the jars in the lockfile. */
+    static Path springLibs() {
+        if (springLibsReady != null) return springLibsReady;
+        try {
+            Path dir = springLibsDir();
+            Path marker = dir.resolve(".lock");
+            Path lock = root.resolve("testkit/spring/libs.lock");
+            if (Files.exists(marker) && Files.exists(lock) && Files.readString(marker).equals(Files.readString(lock))) {
+                springLibsReady = dir.toAbsolutePath().normalize();
+            }
+        } catch (IOException e) {
+            return null;
+        }
+        return springLibsReady;
+    }
+
+    /** An optional class-data-sharing archive of the Spring jars (built in the Dockerfile), for faster starts. */
+    static Path springCds() {
+        String env = System.getenv("LAB_SPRING_CDS");
+        if (env == null || env.isBlank()) return null;
+        Path p = Paths.get(env);
+        return Files.isRegularFile(p) ? p : null;
+    }
+
+    /** Downloads every jar in testkit/spring/libs.lock from Maven Central and checks its SHA-256. */
+    static void fetchSpring() throws Exception {
+        Path lock = root.resolve("testkit/spring/libs.lock");
+        Path dir = springLibsDir();
+        Files.createDirectories(dir);
+        java.net.http.HttpClient http = java.net.http.HttpClient.newBuilder()
+                .followRedirects(java.net.http.HttpClient.Redirect.NORMAL).build();
+        java.util.Set<String> wanted = new java.util.HashSet<>();
+        int fetched = 0;
+        for (String line : Files.readAllLines(lock)) {
+            line = line.strip();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            String[] parts = line.split("\\s+");
+            String[] gav = parts[0].split(":");
+            if (parts.length != 2 || gav.length != 3 || !parts[1].matches("[0-9a-f]{64}")) {
+                throw new IllegalStateException("bad lockfile line: " + line);
+            }
+            String file = gav[1] + "-" + gav[2] + ".jar";
+            wanted.add(file);
+            Path dest = dir.resolve(file);
+            if (Files.exists(dest) && sha256(Files.readAllBytes(dest)).equals(parts[1])) continue;
+            String url = MAVEN_CENTRAL + gav[0].replace('.', '/') + "/" + gav[1] + "/" + gav[2] + "/" + file;
+            byte[] body = http.send(java.net.http.HttpRequest.newBuilder(URI.create(url)).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofByteArray()).body();
+            if (!sha256(body).equals(parts[1])) throw new IllegalStateException("checksum mismatch for " + url);
+            Path tmp = dir.resolve(file + ".part");
+            Files.write(tmp, body);
+            Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
+            fetched++;
+        }
+        try (Stream<Path> s = Files.list(dir)) { // jars from an older lockfile would end up on the classpath
+            for (Path p : s.toList()) {
+                String n = p.getFileName().toString();
+                if (n.endsWith(".jar") && !wanted.contains(n)) Files.delete(p);
+            }
+        }
+        Files.writeString(dir.resolve(".lock"), Files.readString(lock));
+        System.out.println("Spring libraries ready in " + dir + " (" + wanted.size() + " jars, " + fetched + " downloaded)");
+    }
+
+    static String sha256(byte[] data) throws Exception {
+        byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(data);
+        StringBuilder sb = new StringBuilder();
+        for (byte b : d) sb.append(String.format("%02x", b));
+        return sb.toString();
+    }
+
+    /** Every jar in the folder, sorted, as one class path (javac's API doesn't expand "dir/*"). */
+    static String springClasspath(Path libs) throws IOException {
+        try (Stream<Path> s = Files.list(libs)) {
+            return String.join(File.pathSeparator, s.filter(p -> p.toString().endsWith(".jar")).sorted()
+                    .map(Path::toString).toList());
+        }
+    }
+
+    static Path springKitPath;
+
+    /** testkit/spring (the JUnit runner), compiled once per server run against the Spring jars. */
+    static synchronized Path springKitDir() throws IOException {
+        if (springKitPath != null) return springKitPath;
+        Path out = build.resolve("_springkit");
+        deleteTree(out);
+        String err = compile(listFilesAbs(root.resolve("testkit/spring/src"), "java"), out,
+                springClasspath(springLibs()) + File.pathSeparator + out, List.of());
+        if (err != null) throw new IllegalStateException("Spring test kit failed to compile:\n" + err);
+        // quiet logging, and Mockito's subclass mock maker (the default inline one attaches a Java agent)
+        Path kitSrc = root.resolve("testkit/spring/src");
+        try (Stream<Path> s = Files.walk(kitSrc)) {
+            for (Path p : s.filter(p -> Files.isRegularFile(p) && !p.toString().endsWith(".java")).toList()) {
+                Path dest = out.resolve(kitSrc.relativize(p).toString());
+                Files.createDirectories(dest.getParent());
+                Files.copy(p, dest, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+        openPermissions(out);
+        springKitPath = out;
+        return out;
     }
 
     /** Python: our runner imports the tests (and through them the code), after installing the sandbox. */
@@ -1418,11 +1656,16 @@ public class LabServer {
 
     /** In-process javac. Annotation processing is off, so compiling never runs submitted code. */
     static String compile(List<Path> sources, Path out, String classpath) throws IOException {
+        return compile(sources, out, classpath, List.of());
+    }
+
+    static String compile(List<Path> sources, Path out, String classpath, List<String> extra) throws IOException {
         javax.tools.JavaCompiler jc = javax.tools.ToolProvider.getSystemJavaCompiler();
         if (jc == null) throw new IllegalStateException("A JDK is required (javac not found). Install JDK 17+.");
         Files.createDirectories(out);
         List<String> opts = new ArrayList<>(List.of("-encoding", "UTF-8", "-nowarn", "-proc:none", "-implicit:class",
                 "-d", out.toString()));
+        opts.addAll(extra);
         opts.add("-cp");
         opts.add(classpath == null ? out.toString() : classpath);
         javax.tools.DiagnosticCollector<javax.tools.JavaFileObject> diags = new javax.tools.DiagnosticCollector<>();

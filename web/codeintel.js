@@ -26,6 +26,9 @@
     cpp: "std string vector map unordered_map set unordered_set deque queue priority_queue stack pair tuple optional variant array list mutex shared_mutex lock_guard unique_lock shared_lock scoped_lock condition_variable thread atomic chrono size_t int64_t uint64_t uint32_t move forward make_shared make_unique shared_ptr unique_ptr function sort find begin end size empty push_back emplace_back insert erase count at front back to_string stoi stoll invalid_argument out_of_range runtime_error logic_error exception what",
   };
 
+  // Spring Boot track: common annotations and types, offered with the Java names
+  const SPRING_NAMES = "SpringBootApplication SpringApplication Bean Configuration Component Service Repository RestController Controller RestControllerAdvice ExceptionHandler RequestMapping GetMapping PostMapping PutMapping DeleteMapping PatchMapping PathVariable RequestParam RequestBody RequestHeader ResponseStatus ResponseEntity HttpStatus HttpHeaders ProblemDetail URI Valid Validated NotNull NotBlank NotEmpty Size Min Max Email Pattern Positive MethodArgumentNotValidException HandlerMethodValidationException FieldError Value ConfigurationProperties Profile Primary Qualifier Scope Lazy Transactional Async Scheduled Cacheable CacheEvict Clock";
+
   const NOT_NAMES = new Set(("if for while switch catch return new else throw sizeof do case try synchronized " +
     "elif except with assert yield await defer go select delete").split(" "));
 
@@ -192,7 +195,7 @@
     });
   }
 
-  const INDEXERS = { java: indexJava, python: indexPython, go: indexGo, cpp: indexCpp };
+  const INDEXERS = { java: indexJava, python: indexPython, go: indexGo, cpp: indexCpp, spring: indexJava };
 
   function index(files, lang) {
     const out = [];
@@ -233,8 +236,9 @@
       ? [...symbols.filter((s) => members.has(s.kind)), ...symbols.filter((s) => !members.has(s.kind))]
       : symbols.filter((s) => s.kind !== "param" && s.kind !== "var").concat(symbols.filter((s) => s.kind === "param" || s.kind === "var"));
     ordered.forEach((s) => offer(s.name, s.kind));
-    if (!afterDot) (KEYWORDS[lang] || "").split(" ").forEach((k) => offer(k, "keyword"));
+    if (!afterDot) (KEYWORDS[lang] || (lang === "spring" ? KEYWORDS.java : "")).split(" ").forEach((k) => offer(k, "keyword"));
     (BUILTINS[lang] || "").split(" ").forEach((b) => offer(b, "library"));
+    if (lang === "spring") (BUILTINS.java + " " + SPRING_NAMES).split(" ").forEach((b) => offer(b, "library"));
     // any other identifier already used in the open files or the tests
     for (const text of Object.values(files)) {
       const words = (text || "").match(/[A-Za-z_]\w{2,}/g) || [];

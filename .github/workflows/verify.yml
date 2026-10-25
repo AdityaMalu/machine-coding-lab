@@ -26,11 +26,14 @@ jobs:
           go-version: "1.23"
           cache: false
 
+      - name: Fetch the pinned Spring Boot jars
+        run: java server/LabServer.java fetch-spring
+
       - name: Every reference solution passes its tests (all languages)
         run: |
           set -e
           for id in $(jq -r '.[].id' projects/catalog.json); do
-            for lang in java python go cpp; do
+            for lang in java python go cpp spring; do
               [ -d "projects/$id/$lang/starter/src" ] || continue
               echo "::group::$id ($lang solution)"
               java server/LabServer.java test "$id" solution "$lang"
@@ -41,7 +44,7 @@ jobs:
       - name: Every starter compiles (tests are expected to fail)
         run: |
           for id in $(jq -r '.[].id' projects/catalog.json); do
-            for lang in java python go cpp; do
+            for lang in java python go cpp spring; do
               [ -d "projects/$id/$lang/starter/src" ] || continue
               out=$(java server/LabServer.java test "$id" starter "$lang" || true)
               if echo "$out" | grep -q "COMPILATION FAILED"; then
@@ -77,6 +80,29 @@ jobs:
             echo "$lang: $(jq -c '{ok, passed, total, timing}' "result-$lang.json")"
             jq -e '.ok == true' "result-$lang.json" > /dev/null || { cat "result-$lang.json"; exit 1; }
           done
+      - name: Spring Boot solution passes inside the sandbox
+        run: |
+          curl -sf -X POST "localhost:8080/api/run/notes-api?mode=solution&lang=spring" > result-spring.json
+          echo "spring: $(jq -c '{ok, passed, total, timing}' result-spring.json)"
+          jq -r '.output' result-spring.json | grep "Run stats" || true
+          jq -e '.ok == true' result-spring.json > /dev/null || { cat result-spring.json; exit 1; }
+      - name: Spring Boot rejects submitted code until it has an OS-level sandbox
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "localhost:8080/api/run/notes-api?lang=spring"             -H 'Content-Type: application/json' --data-binary '{"notes/X.java":"package notes; class X {}"}')
+          [ "$code" = "403" ] || { echo "::error::expected 403, got $code"; exit 1; }
+      - name: Spring Boot under Render's free-tier limits (512 MB, 0.1 CPU)
+        run: |
+          docker run -d --name lab-small --memory=512m --memory-swap=512m --cpus=0.1 -p 8081:8080 build-lab
+          for i in $(seq 1 120); do curl -sf localhost:8081/api/config > /dev/null && break; sleep 2; done
+          for run in 1 2 3; do
+            start=$(date +%s)
+            curl -s -m 170 -X POST "localhost:8081/api/run/notes-api?mode=solution&lang=spring" > "small-$run.json" || true
+            echo "run $run: $(( $(date +%s) - start )) s wall, $(jq -c '{ok, passed, total, timing}' "small-$run.json" 2>/dev/null || head -c 300 "small-$run.json")"
+            jq -r '.output' "small-$run.json" 2>/dev/null | grep "Run stats" || true
+          done
+          docker stats --no-stream lab-small
+          docker inspect lab-small --format 'OOM killed: {{.State.OOMKilled}}, restarts: {{.RestartCount}}'
+          docker logs lab-small 2>&1 | tail -n 20
       - name: Metrics count the runs
         run: |
           curl -sf localhost:8080/metrics > metrics.txt

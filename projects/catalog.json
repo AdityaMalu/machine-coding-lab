@@ -1,4 +1,7 @@
 [
+  {"id": "notes-api", "title": "Notes API", "difficulty": "Easy", "minutes": 45, "kind": "build", "preview": true,
+   "summary": "Spring Boot REST API: controllers, constructor injection, validation, ProblemDetail errors and a race-free unique title.",
+   "tags": ["Spring Boot", "REST", "Validation", "Concurrency"]},
   {"id": "rate-limiter", "title": "Rate Limiter", "difficulty": "Easy", "minutes": 45, "kind": "build",
    "summary": "Protect an inference gateway with token-bucket and sliding-window limits that hold up under 100 concurrent threads.",
    "tags": ["Concurrency", "API Design", "Backend", "Algorithms"]},
