@@ -128,11 +128,36 @@
     const available = state.projects.filter((p) => hasLang(p.id));
     const solved = available.filter((p) => statusOf(p.id) === "solved").length;
     progressPill.textContent = `${solved} / ${available.length} solved in ${LANG_NAMES[state.lang]}`;
-    // the prep hub shows this on its "Your progress" panel
+    // the prep hub shows this on its "Your progress" panel, and (hosted site) keeps the statuses in the
+    // visitor's Google account if they signed in there
     if (window.parent !== window) {
-      window.parent.postMessage({ type: "hub:progress", solved, total: available.length, lang: LANG_NAMES[state.lang] }, "https://adityamalu.github.io");
+      const msg = { type: "hub:progress", solved, total: available.length, lang: LANG_NAMES[state.lang] };
+      if (state.hosted) msg.progress = { ...state.progress };
+      window.parent.postMessage(msg, HUB_ORIGIN);
     }
   }
+
+  // The prep hub sends back statuses saved in the visitor's account (other devices). Merge, never drop:
+  // solved beats attempted beats nothing. Only the hub, and only as our parent window, may do this.
+  const HUB_ORIGIN = "https://adityamalu.github.io";
+  const STATUS_RANK = { attempted: 1, solved: 2 };
+  window.addEventListener("message", (e) => {
+    if (e.origin !== HUB_ORIGIN || e.source !== window.parent || !state.hosted) return;
+    const d = e.data;
+    if (!d || d.type !== "hub:sync-apply" || !d.progress || typeof d.progress !== "object") return;
+    let changed = false;
+    for (const [k, v] of Object.entries(d.progress).slice(0, 2000)) {
+      if (!/^[a-z]{1,10}:[a-z0-9-]{1,64}$/.test(k) || !STATUS_RANK[v]) continue;
+      if (STATUS_RANK[v] > (STATUS_RANK[state.progress[k]] || 0)) {
+        state.progress[k] = v;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    lsSet("buildlab.progress", state.progress);
+    updateProgress();
+    if (location.pathname === "/") route(); // redraw the list's status badges
+  });
 
   function setupLanguagePicker() {
     const sel = document.getElementById("langSel");
