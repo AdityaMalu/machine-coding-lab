@@ -1041,7 +1041,7 @@ public class LabServer {
                 "-XX:TieredStopAtLevel=1", "-XX:MaxMetaspaceSize=192m", "-XX:ReservedCodeCacheSize=48m",
                 "-Dspring.main.banner-mode=off", "-Dspring.test.print-condition-evaluation-report=false",
                 "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp", cp));
-        Path cds = springCds(stacks);
+        Path cds = springCds(id);
         if (springCdsDump != null) cmd.add(1, "-XX:DumpLoadedClassList=" + springCdsDump);
         else if (cds != null) cmd.add(1, "-XX:SharedArchiveFile=" + cds);
         int timeout = 180;
@@ -1059,7 +1059,7 @@ public class LabServer {
             cmd.add("-Djava.io.tmpdir=" + tmp);
             Path agent = jvmSandbox();
             if (agent != null) cmd.add(1, "-agentpath:" + agent); // kernel-level filter, see testkit/spring/jvmsandbox.cpp
-            timeout = 90;
+            timeout = 150; // Hibernate apps start slowly on a small CPU share (docs/SPRING_TRACK_PLAN.md)
         }
         cmd.add("testkit.SpringRunner");
         Map<String, String> fqn = new LinkedHashMap<>();
@@ -1145,19 +1145,12 @@ public class LabServer {
         return springLibsReady;
     }
 
-    /**
-     * The class-data-sharing archive for a set of stacks (built in the Dockerfile into LAB_SPRING_CDS, one
-     * archive per stack combination, e.g. base.jsa and base+jpa.jsa), or null.
-     */
-    static Path springCds(java.util.SortedSet<String> stacks) {
+    /** The project's class-data-sharing archive (built in the Dockerfile into LAB_SPRING_CDS), or null. */
+    static Path springCds(String id) {
         String env = System.getenv("LAB_SPRING_CDS");
         if (env == null || env.isBlank()) return null;
-        Path p = Paths.get(env).resolve(cdsKey(stacks) + ".jsa");
+        Path p = Paths.get(env).resolve(id + ".jsa");
         return Files.isRegularFile(p) ? p : null;
-    }
-
-    static String cdsKey(java.util.SortedSet<String> stacks) {
-        return stacks.isEmpty() ? "base" : "base+" + String.join("+", stacks);
     }
 
     /** Extra jar stacks a Spring project needs, from projects/<id>/spring/stack (e.g. "jpa"). */
@@ -1199,45 +1192,28 @@ public class LabServer {
     static Path springCdsDump;
 
     /**
-     * Docker build: static CDS archives of the Spring jars and the kit, one per stack combination. Each
-     * project's solution runs once to record the classes it loads; the lists of projects that share a stack
-     * combination are merged, then -Xshare:dump archives the classes found in those jars. Runs put the jars
-     * first on the class path, so an archive's class path is a prefix of theirs.
+     * Docker build: a static CDS archive per Spring project. Its solution runs once to record the classes it
+     * loads (with the lambda call sites, which is where much of the gain is; lists can't be merged without
+     * losing those), then -Xshare:dump archives the classes found in the project's jars and the kit. Runs put
+     * the jars first on the class path, so the archive's class path is a prefix of theirs.
      */
     static void springCdsArchive(Path dir) throws Exception {
         dir = dir.toAbsolutePath();
         Files.createDirectories(dir);
-        Map<String, java.util.LinkedHashSet<String>> lists = new java.util.TreeMap<>();
-        Map<String, java.util.SortedSet<String>> stacksByKey = new java.util.TreeMap<>();
+        String java = Paths.get(System.getProperty("java.home"), "bin", win ? "java.exe" : "java").toString();
         for (String id : projectIds()) {
             if (!Files.isDirectory(langRoot(id, "spring").resolve("solution/src"))) continue;
-            java.util.SortedSet<String> stacks = stacksOf(id);
-            String key = cdsKey(stacks);
-            stacksByKey.put(key, stacks);
             Path list = dir.resolve(id + ".classlist");
             springCdsDump = list;
             Suite s = runSuite(id, "spring", langRoot(id, "spring").resolve("solution/src"), build.resolve("cds-" + id), false, null);
             springCdsDump = null;
             if (!s.ok() || !Files.isRegularFile(list)) throw new IllegalStateException("class list run failed for " + id + ":\n" + s.json());
-            // keep just the class names: each list numbers its classes ("id: 12") and records lambda call sites
-            // ("@lambda-proxy ..."), which can't be merged across runs; the names alone carry most of the gain
-            java.util.LinkedHashSet<String> names = lists.computeIfAbsent(key, k -> new java.util.LinkedHashSet<>());
-            for (String line : Files.readAllLines(list)) {
-                if (line.isBlank() || line.startsWith("#") || line.startsWith("@")) continue;
-                names.add(line.split("\\s+")[0]);
-            }
-            Files.delete(list);
-        }
-        String java = Paths.get(System.getProperty("java.home"), "bin", win ? "java.exe" : "java").toString();
-        for (Map.Entry<String, java.util.LinkedHashSet<String>> e : lists.entrySet()) {
-            Path list = dir.resolve(e.getKey() + ".classlist");
-            Files.write(list, e.getValue());
-            Path archive = dir.resolve(e.getKey() + ".jsa");
-            String cp = springClasspath(springLibs(), stacksByKey.get(e.getKey())) + File.pathSeparator + springKitJar();
+            Path archive = dir.resolve(id + ".jsa");
+            String cp = springClasspath(springLibs(), stacksOf(id)) + File.pathSeparator + springKitJar();
             Proc dump = exec(List.of(java, "-Xshare:dump", "-XX:+UseSerialGC", "-XX:SharedClassListFile=" + list,
                     "-XX:SharedArchiveFile=" + archive, "-cp", cp), 600, build, System.getenv());
             Files.deleteIfExists(list);
-            if (!Files.isRegularFile(archive)) throw new IllegalStateException("CDS dump failed:\n" + dump.output);
+            if (!Files.isRegularFile(archive)) throw new IllegalStateException("CDS dump failed for " + id + ":\n" + dump.output);
             System.out.println("Spring CDS archive: " + archive + " (" + (Files.size(archive) >> 20) + " MB)");
         }
     }
