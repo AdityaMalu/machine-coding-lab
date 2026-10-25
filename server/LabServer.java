@@ -134,6 +134,10 @@ public class LabServer {
             fetchSpring();
             return;
         }
+        if (args.length >= 2 && args[0].equals("spring-cds")) { // Docker build: CDS archive for Spring runs
+            springCdsArchive(Paths.get(args[1]));
+            return;
+        }
         if (args.length >= 1 && args[0].equals("warmup")) { // Docker build: fill the compile caches once
             warmup();
             return;
@@ -179,6 +183,7 @@ public class LabServer {
         server.setExecutor(Executors.newFixedThreadPool(16));
         server.start();
         kitDir(); // compile the Java test kit once up front
+        if (springLibs() != null) warmSpringCompiler();
 
         String url = "http://localhost:" + port + "/";
         System.out.println("MachineCodingLab (" + (hosted ? "hosted" : "local") + " mode) running at " + url + "  (Ctrl+C to stop)");
@@ -1011,7 +1016,7 @@ public class LabServer {
         Files.createDirectories(user);
         long t0 = System.currentTimeMillis();
         String libCp = springClasspath(libs);
-        Path kit = springKitDir();
+        Path kit = springKitJar();
 
         List<Path> userSources = listFilesAbs(src, "spring").stream().filter(p -> p.toString().endsWith(".java")).toList();
         List<String> javacOpts = List.of("-parameters"); // Spring binds @PathVariable / @RequestParam by parameter name
@@ -1028,19 +1033,21 @@ public class LabServer {
         if (sandbox) openPermissions(out);
 
         String java = Paths.get(System.getProperty("java.home"), "bin", win ? "java.exe" : "java").toString();
-        String cp = kit + File.pathSeparator + testOut + File.pathSeparator + libCp + File.pathSeparator + user;
+        // jars first: a CDS archive only applies when its class path is a prefix of the run's
+        String cp = libCp + File.pathSeparator + kit + File.pathSeparator + testOut + File.pathSeparator + user;
         String heap = sandbox ? System.getenv().getOrDefault("LAB_SPRING_HEAP", "160m") : "512m";
         List<String> cmd = new ArrayList<>(List.of(java, "-Xmx" + heap, "-Xss1m", "-XX:+UseSerialGC",
                 "-XX:TieredStopAtLevel=1", "-XX:MaxMetaspaceSize=192m", "-XX:ReservedCodeCacheSize=48m",
                 "-Dspring.main.banner-mode=off", "-cp", cp));
         Path cds = springCds();
-        if (cds != null) cmd.add(1, "-XX:SharedArchiveFile=" + cds);
+        if (springCdsDump != null) cmd.add(1, "-XX:DumpLoadedClassList=" + springCdsDump);
+        else if (cds != null) cmd.add(1, "-XX:SharedArchiveFile=" + cds);
         int timeout = 180;
         if (sandbox) {
             Path tmp = out.resolve("tmp");
             Files.createDirectories(tmp);
             Path policy = out.resolve("sandbox.policy");
-            Files.writeString(policy, policy(kit, testOut, user, tmp)
+            Files.writeString(policy, policy(kit.getParent(), testOut, user, tmp)
                     + "grant codeBase \"" + libs.toUri() + "-\" { permission java.security.AllPermission; };\n"
                     + springUserGrant(user));
             openPermissions(out);
@@ -1143,6 +1150,52 @@ public class LabServer {
         return Files.isRegularFile(p) ? p : null;
     }
 
+    /**
+     * Compiles one Spring solution in the background after startup, so the first visitor's run doesn't pay
+     * for loading javac and indexing the Spring jars (about 35 s instead of 12 s on Render's CPU share).
+     */
+    static void warmSpringCompiler() {
+        Thread t = new Thread(() -> {
+            try {
+                Path src = langRoot("notes-api", "spring").resolve("solution/src");
+                Path out = Files.createTempDirectory(build, "spring-warmup-");
+                springKitJar();
+                compile(listFilesAbs(src, "spring").stream().filter(p -> p.toString().endsWith(".java")).toList(),
+                        out, springClasspath(springLibs()) + File.pathSeparator + out, List.of("-parameters"));
+                deleteTree(out);
+            } catch (Exception | Error e) {
+                System.out.println("Spring warm-up skipped: " + e);
+            }
+        }, "spring-warmup");
+        t.setDaemon(true);
+        t.setPriority(Thread.MIN_PRIORITY);
+        t.start();
+    }
+
+    static Path springCdsDump;
+
+    /**
+     * Docker build: a static CDS archive of the Spring jars and the kit. One run records the classes it loads,
+     * then -Xshare:dump archives the ones from those jars. Runs put the jars first on the class path, so the
+     * archive's class path is a prefix of theirs; the per-run tests and user classes come after it.
+     */
+    static void springCdsArchive(Path archive) throws Exception {
+        archive = archive.toAbsolutePath();
+        Path list = archive.resolveSibling(archive.getFileName() + ".classlist");
+        springCdsDump = list;
+        Suite s = runSuite("notes-api", "spring", langRoot("notes-api", "spring").resolve("solution/src"),
+                build.resolve("cds"), false, null);
+        springCdsDump = null;
+        if (!s.ok() || !Files.isRegularFile(list)) throw new IllegalStateException("class list run failed:\n" + s.json());
+        String java = Paths.get(System.getProperty("java.home"), "bin", win ? "java.exe" : "java").toString();
+        String cp = springClasspath(springLibs()) + File.pathSeparator + springKitJar();
+        Proc dump = exec(List.of(java, "-Xshare:dump", "-XX:+UseSerialGC", "-XX:SharedClassListFile=" + list,
+                "-XX:SharedArchiveFile=" + archive, "-cp", cp), 600, build, System.getenv());
+        Files.deleteIfExists(list);
+        if (!Files.isRegularFile(archive)) throw new IllegalStateException("CDS dump failed:\n" + dump.output);
+        System.out.println("Spring CDS archive: " + archive + " (" + (Files.size(archive) >> 20) + " MB)");
+    }
+
     /** Downloads every jar in testkit/spring/libs.lock from Maven Central and checks its SHA-256. */
     static void fetchSpring() throws Exception {
         Path lock = root.resolve("testkit/spring/libs.lock");
@@ -1200,26 +1253,59 @@ public class LabServer {
 
     static Path springKitPath;
 
-    /** testkit/spring (the JUnit runner), compiled once per server run against the Spring jars. */
-    static synchronized Path springKitDir() throws IOException {
+    /**
+     * testkit/spring (the JUnit runner, quiet logging, Mockito's subclass mock maker, since the default inline
+     * one attaches a Java agent) as a jar at a fixed path next to the Spring jars. It is rebuilt only when the
+     * kit's sources change, so a CDS archive that includes it stays valid across server restarts.
+     */
+    static synchronized Path springKitJar() throws IOException {
         if (springKitPath != null) return springKitPath;
-        Path out = build.resolve("_springkit");
-        deleteTree(out);
-        String err = compile(listFilesAbs(root.resolve("testkit/spring/src"), "java"), out,
-                springClasspath(springLibs()) + File.pathSeparator + out, List.of());
-        if (err != null) throw new IllegalStateException("Spring test kit failed to compile:\n" + err);
-        // quiet logging, and Mockito's subclass mock maker (the default inline one attaches a Java agent)
         Path kitSrc = root.resolve("testkit/spring/src");
+        Path jar = springLibs().resolve("kit").resolve("springkit.jar");
+        List<Path> sources;
         try (Stream<Path> s = Files.walk(kitSrc)) {
-            for (Path p : s.filter(p -> Files.isRegularFile(p) && !p.toString().endsWith(".java")).toList()) {
-                Path dest = out.resolve(kitSrc.relativize(p).toString());
-                Files.createDirectories(dest.getParent());
-                Files.copy(p, dest, StandardCopyOption.REPLACE_EXISTING);
+            sources = s.filter(Files::isRegularFile).sorted().toList();
+        }
+        StringBuilder stamp = new StringBuilder();
+        for (Path p : sources) stamp.append(kitSrc.relativize(p)).append('\n').append(Files.readString(p)).append('\n');
+        String hash;
+        try {
+            hash = sha256(stamp.toString().getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            throw new IOException(e);
+        }
+        Path stampFile = jar.resolveSibling("springkit.sha256");
+        if (Files.isRegularFile(jar) && Files.exists(stampFile) && Files.readString(stampFile).equals(hash)) {
+            springKitPath = jar;
+            return jar;
+        }
+        Path classes = Files.createTempDirectory("springkit-");
+        String err = compile(sources.stream().filter(p -> p.toString().endsWith(".java")).toList(), classes,
+                springClasspath(springLibs()) + File.pathSeparator + classes, List.of());
+        if (err != null) throw new IllegalStateException("Spring test kit failed to compile:\n" + err);
+        for (Path p : sources) {
+            if (p.toString().endsWith(".java")) continue;
+            Path dest = classes.resolve(kitSrc.relativize(p).toString());
+            Files.createDirectories(dest.getParent());
+            Files.copy(p, dest, StandardCopyOption.REPLACE_EXISTING);
+        }
+        Files.createDirectories(jar.getParent());
+        Path tmpJar = jar.resolveSibling("springkit.jar.part");
+        try (java.util.jar.JarOutputStream zip = new java.util.jar.JarOutputStream(Files.newOutputStream(tmpJar));
+             Stream<Path> s = Files.walk(classes)) {
+            for (Path p : s.filter(Files::isRegularFile).sorted().toList()) {
+                java.util.jar.JarEntry e = new java.util.jar.JarEntry(classes.relativize(p).toString().replace('\\', '/'));
+                e.setTime(0); // same bytes for the same sources
+                zip.putNextEntry(e);
+                Files.copy(p, zip);
+                zip.closeEntry();
             }
         }
-        openPermissions(out);
-        springKitPath = out;
-        return out;
+        Files.move(tmpJar, jar, StandardCopyOption.REPLACE_EXISTING);
+        Files.writeString(stampFile, hash);
+        deleteTree(classes);
+        springKitPath = jar;
+        return jar;
     }
 
     /** Python: our runner imports the tests (and through them the code), after installing the sandbox. */

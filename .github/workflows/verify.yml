@@ -92,7 +92,7 @@ jobs:
           [ "$code" = "403" ] || { echo "::error::expected 403, got $code"; exit 1; }
       - name: JVM seccomp agent blocks trusted code too
         run: |
-          out=$(docker run --rm -e LAB_SANDBOX=1 -v "$PWD/.github/sandbox-probes:/probes:ro" build-lab             sh -c 'java -agentpath:$LAB_JVM_SANDBOX /probes/JvmProbe.java' 2>&1 || true)
+          out=$(docker run --rm --entrypoint sh -e LAB_SANDBOX=1 -v "$PWD/.github/sandbox-probes:/probes:ro" build-lab -c 'java -agentpath:$LAB_JVM_SANDBOX /probes/JvmProbe.java' 2>&1 || true)
           echo "$out"
           echo "$out" | grep -q "PROBE ALLOWED\|PROBE BROKEN" && { echo "::error::JVM agent gap"; exit 1; }
           [ "$(echo "$out" | grep -c 'PROBE BLOCKED')" -ge 3 ] || { echo "::error::JVM probes did not all run"; exit 1; }
