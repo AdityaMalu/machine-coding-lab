@@ -1015,7 +1015,8 @@ public class LabServer {
         Path testOut = out.resolve("tests");
         Files.createDirectories(user);
         long t0 = System.currentTimeMillis();
-        String libCp = springClasspath(libs);
+        java.util.SortedSet<String> stacks = stacksOf(id);
+        String libCp = springClasspath(libs, stacks);
         Path kit = springKitJar();
 
         List<Path> userSources = listFilesAbs(src, "spring").stream().filter(p -> p.toString().endsWith(".java")).toList();
@@ -1038,8 +1039,9 @@ public class LabServer {
         String heap = sandbox ? System.getenv().getOrDefault("LAB_SPRING_HEAP", "160m") : "512m";
         List<String> cmd = new ArrayList<>(List.of(java, "-Xmx" + heap, "-Xss1m", "-XX:+UseSerialGC",
                 "-XX:TieredStopAtLevel=1", "-XX:MaxMetaspaceSize=192m", "-XX:ReservedCodeCacheSize=48m",
-                "-Dspring.main.banner-mode=off", "-cp", cp));
-        Path cds = springCds();
+                "-Dspring.main.banner-mode=off", "-Dspring.test.print-condition-evaluation-report=false",
+                "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp", cp));
+        Path cds = springCds(stacks);
         if (springCdsDump != null) cmd.add(1, "-XX:DumpLoadedClassList=" + springCdsDump);
         else if (cds != null) cmd.add(1, "-XX:SharedArchiveFile=" + cds);
         int timeout = 180;
@@ -1083,6 +1085,7 @@ public class LabServer {
         return "grant codeBase \"" + user.toUri() + "-\" {\n"
                 + "  permission java.lang.RuntimePermission \"getProtectionDomain\";\n"
                 + "  permission java.lang.reflect.ReflectPermission \"suppressAccessChecks\";\n"
+                + "  permission java.lang.RuntimePermission \"accessDeclaredMembers\";\n"
                 + "};\n";
     }
 
@@ -1142,12 +1145,32 @@ public class LabServer {
         return springLibsReady;
     }
 
-    /** An optional class-data-sharing archive of the Spring jars (built in the Dockerfile), for faster starts. */
-    static Path springCds() {
+    /**
+     * The class-data-sharing archive for a set of stacks (built in the Dockerfile into LAB_SPRING_CDS, one
+     * archive per stack combination, e.g. base.jsa and base+jpa.jsa), or null.
+     */
+    static Path springCds(java.util.SortedSet<String> stacks) {
         String env = System.getenv("LAB_SPRING_CDS");
         if (env == null || env.isBlank()) return null;
-        Path p = Paths.get(env);
+        Path p = Paths.get(env).resolve(cdsKey(stacks) + ".jsa");
         return Files.isRegularFile(p) ? p : null;
+    }
+
+    static String cdsKey(java.util.SortedSet<String> stacks) {
+        return stacks.isEmpty() ? "base" : "base+" + String.join("+", stacks);
+    }
+
+    /** Extra jar stacks a Spring project needs, from projects/<id>/spring/stack (e.g. "jpa"). */
+    static java.util.SortedSet<String> stacksOf(String id) throws IOException {
+        java.util.SortedSet<String> out = new java.util.TreeSet<>();
+        Path f = langRoot(id, "spring").resolve("stack");
+        if (!Files.exists(f)) return out;
+        for (String w : Files.readString(f).strip().split("\\s+")) {
+            if (w.isEmpty()) continue;
+            if (!w.matches("[a-z]{1,20}")) throw new IllegalStateException("bad stack name in " + f + ": " + w);
+            out.add(w);
+        }
+        return out;
     }
 
     /**
@@ -1161,7 +1184,8 @@ public class LabServer {
                 Path out = Files.createTempDirectory(build, "spring-warmup-");
                 springKitJar();
                 compile(listFilesAbs(src, "spring").stream().filter(p -> p.toString().endsWith(".java")).toList(),
-                        out, springClasspath(springLibs()) + File.pathSeparator + out, List.of("-parameters"));
+                        out, springClasspath(springLibs(), stacksOf("notes-api")) + File.pathSeparator + out,
+                        List.of("-parameters"));
                 deleteTree(out);
             } catch (Exception | Error e) {
                 System.out.println("Spring warm-up skipped: " + e);
@@ -1175,25 +1199,70 @@ public class LabServer {
     static Path springCdsDump;
 
     /**
-     * Docker build: a static CDS archive of the Spring jars and the kit. One run records the classes it loads,
-     * then -Xshare:dump archives the ones from those jars. Runs put the jars first on the class path, so the
-     * archive's class path is a prefix of theirs; the per-run tests and user classes come after it.
+     * Docker build: static CDS archives of the Spring jars and the kit, one per stack combination. Each
+     * project's solution runs once to record the classes it loads; the lists of projects that share a stack
+     * combination are merged, then -Xshare:dump archives the classes found in those jars. Runs put the jars
+     * first on the class path, so an archive's class path is a prefix of theirs.
      */
-    static void springCdsArchive(Path archive) throws Exception {
-        archive = archive.toAbsolutePath();
-        Path list = archive.resolveSibling(archive.getFileName() + ".classlist");
-        springCdsDump = list;
-        Suite s = runSuite("notes-api", "spring", langRoot("notes-api", "spring").resolve("solution/src"),
-                build.resolve("cds"), false, null);
-        springCdsDump = null;
-        if (!s.ok() || !Files.isRegularFile(list)) throw new IllegalStateException("class list run failed:\n" + s.json());
+    static void springCdsArchive(Path dir) throws Exception {
+        dir = dir.toAbsolutePath();
+        Files.createDirectories(dir);
+        Map<String, java.util.LinkedHashSet<String>> lists = new java.util.TreeMap<>();
+        Map<String, java.util.SortedSet<String>> stacksByKey = new java.util.TreeMap<>();
+        for (String id : projectIds()) {
+            if (!Files.isDirectory(langRoot(id, "spring").resolve("solution/src"))) continue;
+            java.util.SortedSet<String> stacks = stacksOf(id);
+            String key = cdsKey(stacks);
+            stacksByKey.put(key, stacks);
+            Path list = dir.resolve(id + ".classlist");
+            springCdsDump = list;
+            Suite s = runSuite(id, "spring", langRoot(id, "spring").resolve("solution/src"), build.resolve("cds-" + id), false, null);
+            springCdsDump = null;
+            if (!s.ok() || !Files.isRegularFile(list)) throw new IllegalStateException("class list run failed for " + id + ":\n" + s.json());
+            // keep just the class names: each list numbers its classes ("id: 12") and records lambda call sites
+            // ("@lambda-proxy ..."), which can't be merged across runs; the names alone carry most of the gain
+            java.util.LinkedHashSet<String> names = lists.computeIfAbsent(key, k -> new java.util.LinkedHashSet<>());
+            for (String line : Files.readAllLines(list)) {
+                if (line.isBlank() || line.startsWith("#") || line.startsWith("@")) continue;
+                names.add(line.split("\\s+")[0]);
+            }
+            Files.delete(list);
+        }
         String java = Paths.get(System.getProperty("java.home"), "bin", win ? "java.exe" : "java").toString();
-        String cp = springClasspath(springLibs()) + File.pathSeparator + springKitJar();
-        Proc dump = exec(List.of(java, "-Xshare:dump", "-XX:+UseSerialGC", "-XX:SharedClassListFile=" + list,
-                "-XX:SharedArchiveFile=" + archive, "-cp", cp), 600, build, System.getenv());
-        Files.deleteIfExists(list);
-        if (!Files.isRegularFile(archive)) throw new IllegalStateException("CDS dump failed:\n" + dump.output);
-        System.out.println("Spring CDS archive: " + archive + " (" + (Files.size(archive) >> 20) + " MB)");
+        for (Map.Entry<String, java.util.LinkedHashSet<String>> e : lists.entrySet()) {
+            Path list = dir.resolve(e.getKey() + ".classlist");
+            Files.write(list, e.getValue());
+            Path archive = dir.resolve(e.getKey() + ".jsa");
+            String cp = springClasspath(springLibs(), stacksByKey.get(e.getKey())) + File.pathSeparator + springKitJar();
+            Proc dump = exec(List.of(java, "-Xshare:dump", "-XX:+UseSerialGC", "-XX:SharedClassListFile=" + list,
+                    "-XX:SharedArchiveFile=" + archive, "-cp", cp), 600, build, System.getenv());
+            Files.deleteIfExists(list);
+            if (!Files.isRegularFile(archive)) throw new IllegalStateException("CDS dump failed:\n" + dump.output);
+            System.out.println("Spring CDS archive: " + archive + " (" + (Files.size(archive) >> 20) + " MB)");
+        }
+    }
+
+    /** One lockfile entry: Maven coordinates, SHA-256 and the stack it belongs to ("" = every project). */
+    record SpringJar(String group, String artifact, String version, String sha256, String stack) {
+        String file() {
+            return artifact + "-" + version + ".jar";
+        }
+    }
+
+    static List<SpringJar> springLock() throws IOException {
+        List<SpringJar> out = new ArrayList<>();
+        for (String line : Files.readAllLines(root.resolve("testkit/spring/libs.lock"))) {
+            line = line.strip();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            String[] parts = line.split("\\s+");
+            String[] gav = parts[0].split(":");
+            if (parts.length < 2 || parts.length > 3 || gav.length != 3 || !parts[1].matches("[0-9a-f]{64}")
+                    || (parts.length == 3 && !parts[2].matches("[a-z]{1,20}"))) {
+                throw new IllegalStateException("bad lockfile line: " + line);
+            }
+            out.add(new SpringJar(gav[0], gav[1], gav[2], parts[1], parts.length == 3 ? parts[2] : ""));
+        }
+        return out;
     }
 
     /** Downloads every jar in testkit/spring/libs.lock from Maven Central and checks its SHA-256. */
@@ -1205,22 +1274,15 @@ public class LabServer {
                 .followRedirects(java.net.http.HttpClient.Redirect.NORMAL).build();
         java.util.Set<String> wanted = new java.util.HashSet<>();
         int fetched = 0;
-        for (String line : Files.readAllLines(lock)) {
-            line = line.strip();
-            if (line.isEmpty() || line.startsWith("#")) continue;
-            String[] parts = line.split("\\s+");
-            String[] gav = parts[0].split(":");
-            if (parts.length != 2 || gav.length != 3 || !parts[1].matches("[0-9a-f]{64}")) {
-                throw new IllegalStateException("bad lockfile line: " + line);
-            }
-            String file = gav[1] + "-" + gav[2] + ".jar";
+        for (SpringJar jar : springLock()) {
+            String file = jar.file();
             wanted.add(file);
             Path dest = dir.resolve(file);
-            if (Files.exists(dest) && sha256(Files.readAllBytes(dest)).equals(parts[1])) continue;
-            String url = MAVEN_CENTRAL + gav[0].replace('.', '/') + "/" + gav[1] + "/" + gav[2] + "/" + file;
+            if (Files.exists(dest) && sha256(Files.readAllBytes(dest)).equals(jar.sha256())) continue;
+            String url = MAVEN_CENTRAL + jar.group().replace('.', '/') + "/" + jar.artifact() + "/" + jar.version() + "/" + file;
             byte[] body = http.send(java.net.http.HttpRequest.newBuilder(URI.create(url)).build(),
                     java.net.http.HttpResponse.BodyHandlers.ofByteArray()).body();
-            if (!sha256(body).equals(parts[1])) throw new IllegalStateException("checksum mismatch for " + url);
+            if (!sha256(body).equals(jar.sha256())) throw new IllegalStateException("checksum mismatch for " + url);
             Path tmp = dir.resolve(file + ".part");
             Files.write(tmp, body);
             Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
@@ -1243,12 +1305,17 @@ public class LabServer {
         return sb.toString();
     }
 
-    /** Every jar in the folder, sorted, as one class path (javac's API doesn't expand "dir/*"). */
-    static String springClasspath(Path libs) throws IOException {
-        try (Stream<Path> s = Files.list(libs)) {
-            return String.join(File.pathSeparator, s.filter(p -> p.toString().endsWith(".jar")).sorted()
-                    .map(Path::toString).toList());
+    /**
+     * The jars for a project, in lockfile order (javac's API doesn't expand "dir/*"): every jar without a
+     * stack, plus the jars of the requested stacks. Keeping JPA off the other projects' class path matters:
+     * Spring Boot would otherwise auto-configure a database for every app.
+     */
+    static String springClasspath(Path libs, java.util.Set<String> stacks) throws IOException {
+        List<String> out = new ArrayList<>();
+        for (SpringJar jar : springLock()) {
+            if (jar.stack().isEmpty() || stacks.contains(jar.stack())) out.add(libs.resolve(jar.file()).toString());
         }
+        return String.join(File.pathSeparator, out);
     }
 
     static Path springKitPath;
@@ -1281,7 +1348,7 @@ public class LabServer {
         }
         Path classes = Files.createTempDirectory("springkit-");
         String err = compile(sources.stream().filter(p -> p.toString().endsWith(".java")).toList(), classes,
-                springClasspath(springLibs()) + File.pathSeparator + classes, List.of());
+                springClasspath(springLibs(), java.util.Set.of()) + File.pathSeparator + classes, List.of());
         if (err != null) throw new IllegalStateException("Spring test kit failed to compile:\n" + err);
         for (Path p : sources) {
             if (p.toString().endsWith(".java")) continue;
@@ -2687,7 +2754,7 @@ public class LabServer {
 
     static synchronized void setProgress(String key, String status) throws IOException {
         if (!status.matches("todo|attempted|solved")) throw new IllegalArgumentException("bad status");
-        if (!key.matches("(java|python|go|cpp):[a-z0-9-]{1,64}")) throw new IllegalArgumentException("bad key");
+        if (!key.matches("(" + String.join("|", LANGS) + "):[a-z0-9-]{1,64}")) throw new IllegalArgumentException("bad key");
         Map<String, String> map = readProgress();
         if (status.equals("todo")) map.remove(key);
         else map.put(key, status);

@@ -1,32 +1,48 @@
 # Spring Boot 4.1.2 track: every jar the Spring projects compile and run against.
-# One line per jar: groupId:artifactId:version sha256. Fetched from Maven Central by 'LabServer fetch-spring'.
-# To change versions: see "Updating the Spring jars" in docs/SPRING_TRACK_PLAN.md. Never edit a hash by hand.
+# One line per jar: groupId:artifactId:version sha256 [stack]. Jars without a stack are on every Spring
+# project's class path; a project lists extra stacks (e.g. jpa) in projects/<id>/spring/stack.
+# Fetched from Maven Central by 'LabServer fetch-spring'. To change versions: see "Updating the Spring jars"
+# in docs/SPRING_TRACK_PLAN.md. Never edit a hash by hand.
 ch.qos.logback:logback-classic:1.5.38 afb439c61fa287c9e1925523b13baab03617e724406a389d48b61c2c3e46b700
 ch.qos.logback:logback-core:1.5.38 a855a0fc97b1d06f4efb1c3bba5ebd0eb508d8b58e68e89e4bbc23a85135c883
 com.fasterxml.jackson.core:jackson-annotations:2.21 53ca085f4a150f703f49e1aabd935bd03b43e1ea3d55d135438292af22cef56b
 com.fasterxml:classmate:1.7.3 75fbda45456f123fb6e2028a6189442d8d0730b357adce4c0a6d7e789f70669b
+com.h2database:h2:2.4.240 29b70e427cc1c40cdc376283adbb0cc62853073797bb5fe5761f81fe73d57ce0 jpa
 com.jayway.jsonpath:json-path:2.10.0 890daa95dd3892d34d9fabc27cd5153656e6f369358625c88f4dc7b79cbd6c5a
+com.sun.istack:istack-commons-runtime:4.1.2 7fd6792361f4dd00f8c56af4a20cecc0066deea4a8f3dec38348af23fc2296ee jpa
 com.vaadin.external.google:android-json:0.0.20131108.vaadin1 dfb7bae2f404cfe0b72b4d23944698cb716b7665171812a0a4d0f5926c0fac79
+com.zaxxer:HikariCP:7.0.2 f1e612fa27345be3107a85431e8a8aeb205c15364ab2f2d411e40a9d7bb08095 jpa
 commons-logging:commons-logging:1.3.6 f8ead8943401081dea0aa824b5b1ba40a0e4ed297a572a0f02258150a0b62357
 io.micrometer:micrometer-commons:1.17.2 af8c85e879025ce30c381e6810e14c4f52b4150894e36c815860d14763271348
 io.micrometer:micrometer-observation:1.17.2 d3ff53cfa0532dc1af0de349073f9aeb985e01f4b88c1d904350178805859695
 jakarta.activation:jakarta.activation-api:2.1.4 c9db52100ce6c8aac95cc39075f95720d2e561b11f8051b81c121ad4effd7004
 jakarta.annotation:jakarta.annotation-api:3.0.0 b01f55552284cfb149411e64eabca75e942d26d2e1786b32914250e4330afaa2
+jakarta.inject:jakarta.inject-api:2.0.1 f7dc98062fccf14126abb751b64fab12c312566e8cbdc8483598bffcea93af7c jpa
+jakarta.persistence:jakarta.persistence-api:3.2.0 be8a26b0e75c84c1b7600f759256fbc68d60333d89ec0ce3f784fc3ffa09aa8c jpa
+jakarta.transaction:jakarta.transaction-api:2.0.1 50c0a7c760c13ae6c042acf182b28f0047413db95b4636fb8879bcffab5ba875 jpa
 jakarta.validation:jakarta.validation-api:3.1.1 63ce00156388c365f3ac1be71fcfaf114682fc0c452020b5df6e7ec236e142ab
 jakarta.xml.bind:jakarta.xml.bind-api:4.0.5 5e489b6c874c4119e003ff1403db523ee3a8959ec499f3de29e77245efccf216
 net.bytebuddy:byte-buddy-agent:1.18.15 9744e23dfbed9ca95f576fdd699409b76dc975a93a332022aeda6de0daf0c5b5
 net.bytebuddy:byte-buddy:1.18.15 e64ed8697df67cbce8158a6e926cbe841f97d01719d719b7b84784826a9b2b27
 net.minidev:accessors-smart:2.6.0 222c9f547bb20a99fc486403a398352d1306fb671b38abd7ecab6401df170e61
 net.minidev:json-smart:2.6.0 1ae4b561458afb540be8ec5c6dbb4f2e715a319a7ae64854998aaf924770d61b
+org.antlr:antlr4-runtime:4.13.2 dd3e8a13a2d669bf84fb8d834de35ce4875f27157698d206241ec8488aadcaf7 jpa
 org.apache.logging.log4j:log4j-api:2.25.5 64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863
 org.apache.logging.log4j:log4j-to-slf4j:2.25.5 b68e8b47342dbc9b35644a14fe2efc0b7bf18da703910cd05ad5501ffe07bba1
 org.apache.tomcat.embed:tomcat-embed-core:11.0.27 b71785ff101c0df501064b3e3b8c4a02e4f9cc3047a7fa686c41fc4edc2f0cb4
 org.apache.tomcat.embed:tomcat-embed-el:11.0.27 206d6c6b1b6ce67b1c9af9ed0f6f43b4dbbc26164dd47bb49b9aad1583191f33
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.27 cbcd7ed6d7428fa71af6572d541a3ef74ceff42dfc523273950fe586062dc60f
 org.apiguardian:apiguardian-api:1.1.2 b509448ac506d607319f182537f0b35d71007582ec741832a1f111e5b5b70b38
+org.aspectj:aspectjweaver:1.9.25.1 4fe86fdc18faea571f29129c70eaad5d121363504a06d7907be88f6c60ba3116 jpa
 org.assertj:assertj-core:3.27.7 c4a445426c3c2861666863b842cc4ec7bbb1c4226fefd370b6d2fe83d6c4ff0f
 org.awaitility:awaitility:4.3.0 ee58568ea5945dcf988551501655183dc184e23e45a8e013fdfd9036194e6f7b
+org.eclipse.angus:angus-activation:2.0.3 a6bd35c538cf90fff941ad6258c40c08fca0b5c9c3f536c657114f27ce0527a7 jpa
+org.glassfish.jaxb:jaxb-core:4.0.9 6b014df25d22c8446cc2df0a378c5b2137747f197a731d99eb24c756b26f7e8d jpa
+org.glassfish.jaxb:jaxb-runtime:4.0.9 93e09b7316b6af68d6e2083e4c297daf28e8957f45d725077af812c0b12c39ab jpa
+org.glassfish.jaxb:txw2:4.0.9 d6343e5945d87266ca4e8974a0a2a876e1bd147a00fb65ed3f2e1a3a00f3a82a jpa
 org.hamcrest:hamcrest:3.0 5d66b6a4a680755cb6ed7cb104fa7835ef644667586ff0737adeb977c39ecdbc
+org.hibernate.models:hibernate-models:1.1.2 d683d70e2592b23c5f2fbc3510d2e087aa61f2ac399a9090b941a1a42d3f3a98 jpa
+org.hibernate.orm:hibernate-core:7.4.13.Final 02c8c3789931a009f04175de7a6b9f99c9bf87346936fe56cb934197cf8f0dd3 jpa
 org.hibernate.validator:hibernate-validator:9.1.5.Final 1e2c1f63050a6863613d910555a81e850a6aa313e4e5f526984512cfd2946dea
 org.jboss.logging:jboss-logging:3.6.3.Final 7c12ee575508f81e22b1db9334b969d0ec54ef0fd1dcba24eeab1a44235fc366
 org.jspecify:jspecify:1.0.1 070d75f261fe4c5b8202508366715f7f2d4660f88c8ef7e6d3575e48c9683b66
@@ -46,12 +62,26 @@ org.skyscreamer:jsonassert:1.5.3 719095c07d4203961320da593441d8b3b643c18eb1d81aa
 org.slf4j:jul-to-slf4j:2.0.20 062249d0677a0e08039120a2292a8db064c69d04282bf562af2e54c53ff06976
 org.slf4j:slf4j-api:2.0.20 7e1446499b359675d8aabe6af2de86b85e72ae8a2a932c0b40d0e5ba57097439
 org.springframework.boot:spring-boot-autoconfigure:4.1.2 a3582f417c8194a621776d14ea281e072d84e85bdbabc1e02df5c035835b5096
+org.springframework.boot:spring-boot-data-commons:4.1.2 879afbd7c933cbd8840b831b71c83163d0bc2d65bf5e13d0b9221d7716f2302f jpa
+org.springframework.boot:spring-boot-data-jpa-test:4.1.2 9411ef5aac6c3729061a87b91ab4f013138a47b795928e27e857aa9784e90cda jpa
+org.springframework.boot:spring-boot-data-jpa:4.1.2 6909515bee2b23daf6a5fa134f7d5720af54eb61a18507f6e9fe8d2f09335712 jpa
+org.springframework.boot:spring-boot-hibernate:4.1.2 b142691e3f8814862ac17782ec5c6ab720bfce03f8e4e55e6bcb748b2e65c4be jpa
 org.springframework.boot:spring-boot-http-converter:4.1.2 d1e655ce47617315c6d87e754597928a31d21478b5c28b0e3300963b0915b551
 org.springframework.boot:spring-boot-jackson:4.1.2 83a8d3ca9ac434f22e6d148e41ba82aeb52add220484bf7f9551c74323d9cbc7
+org.springframework.boot:spring-boot-jdbc-test:4.1.2 11f8836dc72b3d78186704d4827553efb51028b7e06033d5cd395fb82a6d7934 jpa
+org.springframework.boot:spring-boot-jdbc:4.1.2 2c4f460e7b965fd9a3d7ee6c3d7c5f3ebbc9b447841c118abed20d7b5a72d184 jpa
+org.springframework.boot:spring-boot-jpa-test:4.1.2 b6972a74d5d92927769c40ee3efcdda19a71efa00fb401f8a9eb39982c995d7f jpa
+org.springframework.boot:spring-boot-jpa:4.1.2 3afd067fed0732e28b3b45f276d50d90ed1345d7f864857566dcf0ef7923427a jpa
+org.springframework.boot:spring-boot-persistence:4.1.2 fd1473df17db5d4d444eac14ed262407a971fc0a3a9631e6753343d72e7859af jpa
 org.springframework.boot:spring-boot-resttestclient:4.1.2 db65ebaa4d98048b8c1db5d72b5726a6905fbcc803ad142349d00e3a8e127f94
 org.springframework.boot:spring-boot-servlet:4.1.2 0ff3618e8b37143843d1a8824e42ffd66b4ff73d6225b2087acce4dfc676d0e8
+org.springframework.boot:spring-boot-sql:4.1.2 6055db3a7e6f9b59814aac0a346a604d54a8638beff8a145273415b263936d45 jpa
+org.springframework.boot:spring-boot-starter-data-jpa-test:4.1.2 f163c43e1b4eafe4391c72ebecf95551fcb3313395492d1f93b562035288cd2a jpa
+org.springframework.boot:spring-boot-starter-data-jpa:4.1.2 d44924035f3fd27b7aa81b7d868eb84a03fe0264088a1641a434a1d04dd7846e jpa
 org.springframework.boot:spring-boot-starter-jackson-test:4.1.2 5e700a685403e76efb0cca98d3dbb3251d9af9d619e7d1abdd442759c94d91f6
 org.springframework.boot:spring-boot-starter-jackson:4.1.2 d580732a43d7bb5793dc7ea8dc67020ab55a0af2e7923454d92758ca31d3c046
+org.springframework.boot:spring-boot-starter-jdbc-test:4.1.2 626955fd603fe85cabc4dd629095b73bf3de1c06bf34d94e0acdc23262a632b8 jpa
+org.springframework.boot:spring-boot-starter-jdbc:4.1.2 c87d182025f1eb36a6c5ec4ac2da96f92025173a7f779056ed988ed0f44b5d08 jpa
 org.springframework.boot:spring-boot-starter-logging:4.1.2 bad444f86b06a2a764b4f06b5045f3d43e94c77ed56250a444a29bf755a3b9bd
 org.springframework.boot:spring-boot-starter-test:4.1.2 59f57ac4510055c660b5cc0b2c189a41bf01af7c0a7d3fd10ed3735be06077f2
 org.springframework.boot:spring-boot-starter-tomcat-runtime:4.1.2 05371dcfb766c50238f3f5cce398622189e3e4f131a3c0c8b583d24f37c99716
@@ -63,17 +93,24 @@ org.springframework.boot:spring-boot-starter:4.1.2 38e64ef99846b0f64a2cac43c2bc5
 org.springframework.boot:spring-boot-test-autoconfigure:4.1.2 a0849577358d7441a880a863e93e5bdc9cb0c3dfea5b9f534e611c5e647ffcbc
 org.springframework.boot:spring-boot-test:4.1.2 64fb072775e59575904baa460fb18657c4f7125b9aea714ba14f52cc2b27b531
 org.springframework.boot:spring-boot-tomcat:4.1.2 f0b1d8d33b090bc773298005708b4df1576d1c4b1bbf9583afce065580e13002
+org.springframework.boot:spring-boot-transaction:4.1.2 f0430406b83310c65219082ff16a9af5ee74e2c1ee19f9f478f6a0ab8ec1f70f jpa
 org.springframework.boot:spring-boot-validation:4.1.2 a5f49131fd54481c26d5a93af4f94a11abd02f11608ea231f42424824bae7702
 org.springframework.boot:spring-boot-web-server:4.1.2 e5b2fa7222baf36621566a2d0f7d924aa92a8462680f8e67d972f965ef18356a
 org.springframework.boot:spring-boot-webmvc-test:4.1.2 3a388ee0f5a0c23aaf6e2ffbae7f7257cd435694feaf72367772e4a44d237089
 org.springframework.boot:spring-boot-webmvc:4.1.2 3c39a0578d1e66b5b5371641790a66c89b14f8099731987a7dd6502e2fdd32b5
 org.springframework.boot:spring-boot:4.1.2 1fbf6443a301eb9a098bd024149c0edc6578b073f75da8c98bc1af84c43a8f59
+org.springframework.data:spring-data-commons:4.1.2 b751e9fc2153dc73af94ba3d6b23ff1078231b61e3af14818243e5c37f6c8868 jpa
+org.springframework.data:spring-data-jpa:4.1.2 5d5bf9f644da7fe300c160533783e4b292a3996c6fd7d2afc931b740a1394439 jpa
 org.springframework:spring-aop:7.0.10 babf50a645f4f788e1267078cf891e472f657cabf65518055cf5214220574e3f
+org.springframework:spring-aspects:7.0.10 8c119546615b14dc0f9d12d5cd0e4eae4163f51f00fba205ce83bbecac5ed3de jpa
 org.springframework:spring-beans:7.0.10 bd67c6fc887afa30cbcb489ff4f82bf19f818e79ab1cf1bef98dff8a289108ec
 org.springframework:spring-context:7.0.10 f0065166b6a5101a871ab8702d6c4011cf39faed370a64e7ef14a3ad2bf2a99a
 org.springframework:spring-core:7.0.10 a236f31a7c07e3a1a8e7839ec5c0d47b5cc75709132db50416d5dad320341f12
 org.springframework:spring-expression:7.0.10 12067b66548f7613fa8938ca6051a6d1dd8c397bf478e0bb1adb9936358ec81d
+org.springframework:spring-jdbc:7.0.10 bc4ba6bd242f2db2642938960ae27589b53dd6a611d700a260af7b3383cd0c6c jpa
+org.springframework:spring-orm:7.0.10 a158aabfbd760abd7d50ed352b46421affa46595321e09fe91bec048f2c3b54c jpa
 org.springframework:spring-test:7.0.10 73c18292b63e814c415c1c470fcc47be1e21442b80ee31a0bcd949e53d0c49bd
+org.springframework:spring-tx:7.0.10 9442610a8ed3d44e70fa97f49896ea810c831da62620101450f0feb522edb4cd jpa
 org.springframework:spring-web:7.0.10 76ddb03d236547f6852def8cb303e1cf2cd2c1954dec5bf2abd87d11b89dfee7
 org.springframework:spring-webmvc:7.0.10 8ad0e813999d0ef1c65b8d5e55c21e4a6c0d6895cd3df32a33f9cc57bf9d226a
 org.xmlunit:xmlunit-core:2.11.0 50970e6069c21182689eb44ae9f8193970e080b6f37fc13f22aa4201cca2dfe4

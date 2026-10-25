@@ -4,5 +4,13 @@
     <encoder><pattern>%-5level %logger{30} - %msg%n</pattern></encoder>
   </appender>
   <logger name="org.springframework.web.servlet.mvc.support.DefaultHandlerExceptionResolver" level="ERROR"/>
+  <!-- when the app won't start, Spring Boot's "APPLICATION FAILED TO START" analysis (kept) says why;
+       the full conditions report and the per-context warnings only bury it -->
+  <logger name="org.springframework.boot.autoconfigure.logging.ConditionEvaluationReportLogger" level="OFF"/>
+  <logger name="org.springframework.context.annotation.AnnotationConfigApplicationContext" level="ERROR"/>
+  <logger name="org.springframework.web.context.support.GenericWebApplicationContext" level="ERROR"/>
+  <logger name="org.springframework.test.context.TestContextManager" level="ERROR"/>
+  <!-- SQL errors reach the code as exceptions; the driver-level warning only repeats them -->
+  <logger name="org.hibernate.orm.jdbc.error" level="ERROR"/>
   <root level="WARN"><appender-ref ref="OUT"/></root>
 </configuration>

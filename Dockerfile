@@ -44,8 +44,8 @@ RUN java -cp /app/classes LabServer fetch-spring
 ENV LAB_JVM_SANDBOX=/opt/labsandbox/libjvmsandbox.so
 RUN mkdir -p /opt/labsandbox && g++ -O2 -shared -fPIC -o "$LAB_JVM_SANDBOX" testkit/spring/jvmsandbox.cpp
 # class-data sharing archive of the Spring jars: Spring runs start about 40% faster and use less memory
-ENV LAB_SPRING_CDS=/opt/spring-cds/spring.jsa
-RUN mkdir -p /opt/spring-cds && java -cp /app/classes LabServer spring-cds "$LAB_SPRING_CDS"
+ENV LAB_SPRING_CDS=/opt/spring-cds
+RUN java -cp /app/classes LabServer spring-cds "$LAB_SPRING_CDS"
 
 # fill the compile caches so even the first run after a restart is fast: the C++ kit objects and
 # precompiled header (/opt/cppkit), and the Go build cache (/opt/gocache, written as the runner user)

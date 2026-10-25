@@ -126,11 +126,20 @@ public final class SpringRunner {
     /** The assertion message, plus the root cause when Spring wraps it (e.g. "Failed to load ApplicationContext"). */
     static String message(Throwable t) {
         if (t == null) return "failed";
-        String top = describe(t);
         Throwable root = t;
         while (root.getCause() != null && root.getCause() != root) root = root.getCause();
-        if (root != t) top += " | caused by " + describe(root);
-        return top.length() > 2000 ? top.substring(0, 2000) + "..." : top;
+        String msg = t.getMessage() == null ? "" : t.getMessage();
+        String out;
+        if (msg.startsWith("ApplicationContext failure threshold")) {
+            out = "The app failed to start (see the first failing test, and APPLICATION FAILED TO START in the output)";
+        } else if (msg.startsWith("Failed to load ApplicationContext")) {
+            // the context description in the message is long and says nothing useful; the cause does
+            out = "The app failed to start: " + describe(root);
+        } else {
+            out = describe(t);
+            if (root != t) out += " | caused by " + describe(root);
+        }
+        return out.length() > 2000 ? out.substring(0, 2000) + "..." : out;
     }
 
     static String describe(Throwable t) {

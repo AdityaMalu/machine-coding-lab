@@ -117,11 +117,13 @@ jobs:
         run: |
           docker run -d --name lab-small --memory=512m --memory-swap=512m --cpus=0.1 -p 8081:8080 build-lab
           for i in $(seq 1 120); do curl -sf localhost:8081/api/config > /dev/null && break; sleep 2; done
-          for run in 1 2 3; do
-            start=$(date +%s)
-            curl -s -m 170 -X POST "localhost:8081/api/run/notes-api?mode=solution&lang=spring" > "small-$run.json" || true
-            echo "run $run: $(( $(date +%s) - start )) s wall, $(jq -c '{ok, passed, total, timing}' "small-$run.json" 2>/dev/null || head -c 300 "small-$run.json")"
-            jq -r '.output' "small-$run.json" 2>/dev/null | grep "Run stats" || true
+          for project in notes-api app-wont-start orders-jpa; do
+            for run in 1 2; do
+              start=$(date +%s)
+              curl -s -m 170 -X POST "localhost:8081/api/run/$project?mode=solution&lang=spring" > "small.json" || true
+              echo "$project run $run: $(( $(date +%s) - start )) s wall, $(jq -c '{ok, passed, total, timing}' small.json 2>/dev/null || head -c 300 small.json)"
+              jq -r '.output' small.json 2>/dev/null | grep "Run stats" || true
+            done
           done
           docker stats --no-stream lab-small
           docker inspect lab-small --format 'OOM killed: {{.State.OOMKilled}}, restarts: {{.RestartCount}}'
