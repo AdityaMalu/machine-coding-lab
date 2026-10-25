@@ -4,7 +4,9 @@ Goal: learn Spring Boot by building and fixing real Spring apps in the lab, the 
 teach concurrency: a spec, starter code, a test suite you make pass, and a reference solution. The Java
 Concepts Stepper (Part 5) explains how Spring works; this track is where you write it.
 
-Status: plan only, nothing built yet.
+Status (2026-10-25): **phase 0 spike done, all three gates passed on Render** (section 3). Spring Boot 4.1.2.
+The Spring Boot language and the Notes API project are live but hidden: open the lab with `?preview=spring`.
+On the hosted site only the reference solution runs until `LAB_SPRING_USER_CODE=1` is set.
 
 ## 1. How it fits the lab
 
@@ -33,7 +35,7 @@ pinned jars (`testkit/spring/libs.lock`: Maven Central URL + SHA-256 per jar). T
 | `LANGS` += `"spring"`, display name "Spring Boot" | picker, workspace, progress |
 | `runSpring()`: compile user `src/main/java` then tests, classpath = libs + kit + tests + user, copy `src/main/resources` | same three-root layout as `runJava`, so the security policy still tells them apart |
 | compile with **`-parameters`** | Spring 6.1+ needs it for `@PathVariable` / `@RequestParam` without explicit names; without it the learner gets confusing errors |
-| run javac **out of process** for Spring (its own `-Xmx`) | compiling against ~40 jars in-process could push the server (`-Xmx150m`) out of memory |
+| ~~run javac out of process~~ not needed | the spike measured in-process javac against 79 jars well within the server's memory |
 | `testkit/spring`: a JUnit Platform `TestExecutionListener` that prints the existing `PASS\|` / `FAIL\|` / `RESULT\|` lines | `parseRunnerOutput` and the UI keep working unchanged; single-test runs map to JUnit method selectors |
 | `lab.ps1 spring-setup` / `LabServer fetch-spring`: download the lockfile jars once, check SHA-256 | local mode and Codespaces; the Docker image does this at build time |
 | Test JVM flags: `-XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k -XX:MaxMetaspaceSize=160m`, AppCDS archive of the Spring jars built in the Dockerfile | startup time and memory on Render's small CPU share |
@@ -41,13 +43,39 @@ pinned jars (`testkit/spring/libs.lock`: Maven Central URL + SHA-256 per jar). T
 | `verify` + CI: every Spring solution passes, every starter fails, `sandbox-probes.sh` gets Spring probes | same safety net as the other languages |
 | `codeintel.js`: add common Spring names to `BUILTINS` for `spring` (annotations, `ResponseEntity`, `JpaRepository`, `MockMvc` ...) | autocomplete before you've typed them once |
 
-## 3. The risk: hosting (do this first)
+## 3. The risk: hosting (spike results)
 
-Render free gives 512 MB for the whole container. Today: server 150 MB heap, test JVM 200 MB heap.
-A Spring context adds roughly 70-120 MB of metaspace on top of heap, and starts slowly on a tiny CPU share.
-The security manager is also untested with Spring (proxies, reflection, Hibernate bytecode enhancement).
+### Results (2026-10-25, Notes API reference solution, 19 tests)
 
-**Spike (1-2 days):** one small project (project 1 below) deployed to Render, then measure:
+| Gate | Target | Live Render (8 runs) | CI container at 512 MB / 0.1 CPU | Verdict |
+|---|---|---|---|---|
+| Full run time | < 60 s | **33-42 s** (compile 5.6-6.5 s, JVM + context + tests 26-28 s) | 32-34 s warm, 61 s first run | pass |
+| Memory | fits 512 MB | **container peak ~290 MB**, test JVM RSS ~138 MB | peak 248-272 MB, no OOM kill | pass |
+| Sandbox | probes blocked | solution runs with the seccomp agent loaded (it fails closed) | all probes blocked, trusted and submitted code | pass, with a change (below) |
+
+Locally (fast PC) a run takes about 5 s. For comparison, a Java project run on Render takes about 6 s.
+
+**What it took:**
+- **CDS archive** of the Spring jars and the kit, built in the Dockerfile: JVM time down about 40% (warm
+  runs went from 57-62 s to 32-34 s under the CI limits), metaspace from 41 MB to 3 MB.
+- **Compiler warm-up** at server start, so the first visitor's compile is about 6 s, not 35-47 s.
+- Mockito switched to its subclass mock maker and reflection member accessor (the defaults attach a Java
+  agent at startup), and quiet logging via a `logback-test.xml` in the kit.
+
+**Security finding (important).** Spring can't run under a security manager strict enough to contain
+submitted code. Its CGLIB proxies (for `@Configuration`, `@Transactional`, `@Async`, `@Cacheable`) are defined in
+the user's package, so they get the user's permissions, and Spring 6+ has no `doPrivileged` blocks. User code
+needs `getProtectionDomain` and `suppressAccessChecks`, and all 79 jars need full trust, which lets user code get
+trusted Spring code to act for it. So the security manager is only a second layer for Spring. The first is
+the C++ track's **seccomp filter loaded into the JVM as an agent** (`testkit/spring/jvmsandbox.cpp`): the kernel
+blocks internet sockets, new processes, ptrace and signals for every thread, trusted or not. CI proves it
+both ways: `JvmProbe.java` (trusted code, no security manager) and `SpringProbe.java` (submitted code).
+File reads still rely on the `runner` user's permissions, the same as the C++ track.
+
+**Next decision:** set `LAB_SPRING_USER_CODE=1` in the Render dashboard to let visitors run their own Spring
+code. CI's opt-in server already runs submitted code with every probe blocked.
+
+### The original gates
 
 | Gate | Pass if |
 |---|---|
@@ -95,8 +123,19 @@ oauth2-resource-server (8 only), cache; H2; spring-boot-test + AssertJ + MockMvc
 | 3. Core projects | 4, 5, 6 | same, and project 5's tests fail reliably on a racy solution (run 20 times) |
 | 4. Finish | 7, 8, 9; README table and project count; stepper Part 5 "Practice this" links; hub progress counts Spring | the track is visible on the hosted site (or in local mode if the spike said so) |
 
-## 6. Decisions needed
+## 6. Decisions
 
-1. **Spring Boot version.** Pin the current 4.x release, or stay on 3.5.x, which most codebases and
-   interviews still use. The topics above are the same in both; check OSS support dates at spike time.
-2. **If Render fails the spike:** move Spring runs to the Oracle VM worker, or keep the track local / Codespaces only.
+1. **Spring Boot version: 4.1.2** (decided at the spike; 3.5's open-source support has ended). Boot 4 notes:
+   test annotations moved to per-module packages (`org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc`),
+   Jackson 3 (`tools.jackson`), JUnit 6. Tests send JSON as strings, so they don't depend on the Jackson API.
+2. **Render passed the spike**, so Spring stays on the main site; the Oracle worker is not needed for it.
+3. **Open:** turn on submitted Spring code on Render (`LAB_SPRING_USER_CODE=1`).
+
+## 7. Updating the Spring jars
+
+1. Write a throwaway `pom.xml` with `spring-boot-starter-parent` at the new version and the starters the
+   projects use (today: `webmvc`, `validation`, `webmvc-test`, plus `junit-platform-launcher`).
+2. `mvn dependency:copy-dependencies -DincludeScope=test` and `mvn dependency:list -DincludeScope=test`.
+3. Rebuild `testkit/spring/libs.lock`: one `groupId:artifactId:version sha256` line per jar.
+4. `java server/LabServer.java fetch-spring`, then run every Spring solution and starter (CI does too).
+   Maven is only needed for step 2, never by the lab or its users.
