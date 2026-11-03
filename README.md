@@ -1,9 +1,9 @@
-# MachineCodingLab: backend practice projects in Java, Python, Go and C++
+# MachineCodingLab: backend practice projects in Java, Python, Go, C++ and Spring Boot
 
 [![verify](https://github.com/AdityaMalu/machine-coding-lab/actions/workflows/verify.yml/badge.svg)](https://github.com/AdityaMalu/machine-coding-lab/actions/workflows/verify.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-18 hands-on projects (10 build, 8 debug) with specs, starter code, test suites and reference solutions,
+25 hands-on projects (12 build, 13 debug) with specs, starter code, test suites and reference solutions,
 plus a web UI to read the spec, edit code (with autocomplete and Ctrl+click go-to-definition), and run individual or all tests. **Pick your language** in the top bar;
 your code, results and progress are kept separately for each language. No build tools or libraries needed.
 
@@ -13,8 +13,16 @@ your code, results and progress are kept separately for each language. No build 
 | Python | 10 so far (see the language picker) | `ValueError`/`KeyError`, `threading`, standard library only |
 | Go | 10 so far | returned `error` values with `errors.Is`, goroutines + `sync`, standard `testing` |
 | C++ (C++20) | 10 so far | header-only, `std::invalid_argument`, `std::thread`/`std::mutex` |
+| Spring Boot 4 | 7 (Spring only) | real Spring apps: MockMvc, JPA on H2, caching, async, JUnit 5 ([plan and results](docs/SPRING_TRACK_PLAN.md)) |
 
 More projects are being ported to Python, Go and C++ in batches.
+
+**AI debugging rounds.** Debug projects have an **✦ Assistant** tab, like HackerRank's AI-assisted debugging
+interviews: Claude Haiku 5.5 on your own Anthropic API key (called from your browser; the key never reaches
+this server) reads your code, the tests and your last run, explains them and asks guiding questions, but never
+points at a bug or writes a fix. A guard also hides any code it writes that isn't already in the repo.
+**Interview mode** adds a timer, locks the solution and ends with a report: tests passing, time, test runs and
+how you used the AI.
 
 ## Three ways to use it
 
@@ -111,6 +119,13 @@ web/                                   the UI
 | TTL + LRU Cache | build | Medium | expiry vs eviction, access order, single-flight loading |
 | Retrying Job Queue | build | Hard | leases and tokens, exponential backoff, dead letters |
 | Leaderboard Service | debug | Medium | competition ranking, tie order, mutating TreeSet entries, paging |
+| Notes API *(Spring)* | build | Easy | REST controllers, validation, ProblemDetail, a race-free unique title |
+| App Won't Start *(Spring)* | debug | Easy | bean cycles, ambiguous beans, config binding, lite-mode @Configuration, prototype scope |
+| Orders with JPA *(Spring)* | build | Medium | lazy mappings, cascades, @Version, JPQL, N+1 budget, row locks |
+| Duplicate Charges Incident *(Spring)* | debug | Medium | idempotency races, money math, exception mapping, @Async |
+| Stale Prices Incident *(Spring)* | debug | Medium | cache keys, eviction through proxies, stampedes, paging |
+| Missing Money Incident *(Spring)* | debug | Hard | @Transactional proxies, REQUIRES_NEW audit, lost updates, lock ordering |
+| Missed Reminders Incident *(Spring)* | debug | Hard | ThreadLocal tenants, TaskDecorator, rejection policy, clocks, exactly-once dispatch |
 
 All specs, code and tests here are original material written for practice.
 
