@@ -18,7 +18,8 @@
 (function () {
   "use strict";
 
-  const MAX_TOOL_ROUNDS = 12;
+  const MAX_TOOL_ROUNDS = 8;
+  const HISTORY_TURNS = 6; // earlier questions are dropped from what the model sees (free tiers limit tokens a minute)
 
   let ctx = null;        // the open project
   let chat = null;       // { projectKey, messages: [...neutral messages], view: [...rendered turns] }
@@ -112,7 +113,7 @@
 
   // ------------------------------------------------------------------ the prompt
 
-  function systemPrompt() {
+  function systemPrompt(map) {
     const p = ctx.project;
     const lang = { java: "Java", python: "Python", go: "Go", cpp: "C++", spring: "Java (Spring Boot)" }[ctx.lang] || ctx.lang;
     return `You are the AI assistant in a timed debugging interview round, like HackerRank's AI-assisted debugging rounds.
@@ -136,12 +137,19 @@ If asked for any of that, say briefly that you can't help with that in this roun
 
 Quoting the candidate's existing code exactly is fine when explaining it. Never show code that is not already in the repo.
 
-Use the tools to read files before you explain them; never guess at code you have not read. Line numbers in tool results are for reference. Keep answers short (a few sentences or a short list), plain and friendly. Use Markdown; put quoted code in fenced blocks.
+Use the tools to read files before you explain them; never guess at code you have not read. Line numbers in tool results are for reference.
+Each tool call costs the candidate's limited free quota, so be economical: the file list and the latest test results are already below (don't call list_files or get_test_results for them), call several tools in one turn when you need several, use search to find things, and read only the line ranges you need. Keep answers short (a few sentences or a short list), plain and friendly. Use Markdown; put quoted code in fenced blocks.
 
 The project's spec (README):
 <spec>
 ${ctx.readme}
-</spec>`;
+</spec>
+
+Files in the project:
+${map.files}
+
+Latest test run:
+${map.tests}`;
   }
 
   // ------------------------------------------------------------------ tools (read-only, over this project only)
@@ -154,7 +162,7 @@ ${ctx.readme}
     },
     {
       name: "read_file",
-      description: "Read a file with line numbers. Use a path exactly as list_files returns it. For long files read a range with start_line and end_line (1-based, inclusive); at most 400 lines are returned per call.",
+      description: "Read a file with line numbers. Use a path exactly as list_files returns it. For long files read a range with start_line and end_line (1-based, inclusive); at most 200 lines are returned per call.",
       input_schema: {
         type: "object",
         properties: {
@@ -218,7 +226,7 @@ ${ctx.readme}
       if (text === undefined) return { error: `No file ${path}. Call list_files for the exact paths.` };
       const lines = text.split("\n");
       const start = Math.max(1, Number.isInteger(input.start_line) ? input.start_line : 1);
-      const end = Math.min(lines.length, Number.isInteger(input.end_line) ? input.end_line : lines.length, start + 399);
+      const end = Math.min(lines.length, Number.isInteger(input.end_line) ? input.end_line : lines.length, start + 199);
       const body = lines.slice(start - 1, end).map((l, i) => `${String(start + i).padStart(4)}| ${l}`).join("\n");
       return `${path} lines ${start}-${end} of ${lines.length}\n${body}`;
     }
@@ -396,12 +404,24 @@ ${ctx.readme}
     try { res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) }); }
     catch { throw { code: p === "local" ? "local_unreachable" : "network" }; }
     if (!res.ok) {
-      let msg = "";
-      try { const j = await res.json(); const e = Array.isArray(j) ? j[0] && j[0].error : j.error; msg = (e && (e.message || e)) || j.message || ""; } catch { /* not JSON */ }
-      msg = String(msg).slice(0, 300);
+      let msg = "", wait = null;
+      try {
+        const j = await res.json();
+        const e = Array.isArray(j) ? j[0] && j[0].error : j.error;
+        msg = (e && (e.message || e)) || j.message || "";
+        // Gemini says how long to wait in a RetryInfo detail ("23s")
+        for (const d of (e && e.details) || []) if (d && d.retryDelay) wait = parseFloat(d.retryDelay);
+      } catch { /* not JSON */ }
+      msg = String(typeof msg === "string" ? msg : JSON.stringify(msg)).slice(0, 400);
+      const ra = parseFloat(res.headers.get("retry-after") || "");
+      if (wait == null && Number.isFinite(ra)) wait = ra;
+      const said = msg.match(/(?:try again|retry) in ([\d.]+)\s*(ms|s|m)?/i); // Groq, Gemini, OpenRouter wording
+      if (wait == null && said) wait = (parseFloat(said[1]) / (said[2] === "ms" ? 1000 : 1)) * (said[2] === "m" ? 60 : 1);
       const bad = res.status === 401 || res.status === 403 || /API_KEY_INVALID|invalid.*key|incorrect api key/i.test(msg);
       const noTools = /tool|function/i.test(msg) && /support|not available|unsupported/i.test(msg);
-      throw { code: bad ? "bad_key" : noTools ? "no_tools" : res.status === 402 || /credit balance/i.test(msg) ? "no_credit" : res.status === 429 ? "rate_limited" : res.status === 404 ? "bad_model" : "upstream", message: msg };
+      // a used-up daily quota (or a model with no free quota at all) won't recover by waiting a minute
+      const quota = res.status === 429 && (/limit:\s*0\b|per ?day|PerDay|daily|RPD|free-models-per-day/i.test(msg) || (wait != null && wait > 120));
+      throw { code: bad ? "bad_key" : noTools ? "no_tools" : res.status === 402 || /credit balance/i.test(msg) ? "no_credit" : quota ? "quota" : res.status === 429 ? "rate_limited" : res.status === 404 ? "bad_model" : "upstream", message: msg, wait };
     }
     const out = { text: "", calls: [], parts: [], stop: "" };
     const blocks = {};   // anthropic: index -> block being streamed
@@ -477,7 +497,8 @@ ${ctx.readme}
     switch (e && e.code) {
       case "bad_key": return `${name} rejected the API key. Check it in AI settings below.`;
       case "no_credit": return `Your ${name} account has no credit left. Add credits, or switch to a free provider (Gemini, Groq, OpenRouter) in AI settings.`;
-      case "rate_limited": return `${name} rate-limited this key (free tiers allow a few requests a minute). Wait a moment and ask again.`;
+      case "rate_limited": return `${name} is still rate-limiting this key after retrying. Wait a minute and ask again, or add a second free provider in AI settings so the assistant can switch to it.` + (e.message ? ` (${e.message.slice(0, 200)})` : "");
+      case "quota": return `The free quota for “${modelOf(p)}” on ${name} is used up for now. Pick a lighter model in AI settings (e.g. a flash-lite model on Gemini), or add a second free provider so the assistant can switch to it.` + (e.message ? ` (${e.message.slice(0, 200)})` : "");
       case "bad_model": return `${name} doesn't know the model “${modelOf(p)}”. Pick another one in AI settings.` + (e.message ? ` (${e.message})` : "");
       case "no_tools": return `The model “${modelOf(p)}” can't use tools, so it can't read the code. Pick another model in AI settings.`;
       case "local_unreachable": return "Couldn't reach your local model server. Is it running and allowing this site (OLLAMA_ORIGINS)?";
@@ -486,11 +507,69 @@ ${ctx.readme}
     }
   }
 
+  /** Other providers the visitor has saved a key for: used when the chosen one hits its limit. */
+  function backups(p) {
+    return Object.keys(PROVIDERS).filter((q) => q !== p && (keyStore.get(q) || (PROVIDERS[q].keyOptional && raw.get(K.model(q)))) && modelOf(q));
+  }
+
+  /** The current question's messages plus the last few earlier turns. */
+  function recent(messages, startLen) {
+    let from = startLen, turns = 0;
+    for (let i = startLen - 1; i >= 0; i--) {
+      if (messages[i].role === "user") { if (++turns > HISTORY_TURNS) break; from = i; }
+    }
+    return messages.slice(from);
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function countdown(seconds, what) {
+    for (let s = Math.ceil(seconds); s > 0; s--) { setStatus(`${what} Retrying in ${s}s…`); await sleep(1000); }
+    setStatus("Thinking…");
+  }
+
+  /**
+   * callModel with free-tier care: on a rate limit, wait as long as the provider asks (short waits only) and
+   * retry; if it keeps failing or the daily quota is gone, move on to the next provider with a saved key.
+   */
+  async function resilientCall(order, st, messages, system, onText) {
+    let firstErr = null;
+    for (;;) {
+      const p = order[st.i], name = PROVIDERS[p].name.replace(/ \(.*\)$/, "");
+      try {
+        const r = await callModel(p, messages, system, onText);
+        st.retries = 0;
+        return r;
+      } catch (e) {
+        e.provider = p;
+        if (!firstErr) firstErr = e;
+        const limited = e.code === "rate_limited";
+        const wait = Math.max(2, Math.min(e.wait != null ? e.wait + 0.5 : 8 * (st.retries + 1), 60));
+        const hasNext = st.i + 1 < order.length;
+        // a short wait is cheaper than switching models mid-answer
+        if (limited && st.retries < 2 && (wait <= 20 || !hasNext)) {
+          st.retries++;
+          await countdown(wait, `${name} is rate-limited (free tier).`);
+          continue;
+        }
+        // the chosen provider failing for other reasons (bad key...) is reported, not hidden
+        if (!limited && e.code !== "quota" && st.i === 0) throw e;
+        if (hasNext) {
+          st.i++;
+          st.retries = 0;
+          setStatus(`${name} ${e.code === "quota" ? "is out of free quota" : "is unavailable"}; switching to ${PROVIDERS[order[st.i]].name.replace(/ \(.*\)$/, "")}…`);
+          continue;
+        }
+        throw firstErr;
+      }
+    }
+  }
+
   async function ask(question) {
     if (busy || !question.trim()) return;
     const c = chatState();
     busy = true;
-    const p = current();
+    let p = current();
+    const first = p;
     const startLen = c.messages.length;
     c.messages.push({ role: "user", text: question });
     c.view.push({ role: "user", text: question });
@@ -504,9 +583,16 @@ ${ctx.readme}
     draw();
     try {
       await refreshQuoteIndex();
-      const system = systemPrompt();
+      const files = await corpus();
+      const system = systemPrompt({
+        files: Object.keys(files).map((f) => `${f} (${files[f].split("\n").length} lines)${f.startsWith("src/") ? " [editable]" : ""}`).join("\n"),
+        tests: lastRunText().slice(0, 4000),
+      });
+      const order = [p, ...backups(p)];
+      const st = { i: 0, retries: 0 };
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        const reply = await callModel(p, c.messages, system, (delta) => { turn.text += delta; updateLast(turn.text); });
+        const reply = await resilientCall(order, st, recent(c.messages, startLen), system, (delta) => { turn.text += delta; updateLast(turn.text); });
+        p = order[st.i];
         if (reply.stop === "refusal") {
           turn.text += (turn.text ? "\n\n" : "") + "*The model declined to answer that. Try asking about the code another way.*";
           break;
@@ -529,8 +615,12 @@ ${ctx.readme}
         c.messages.push({ role: "tool", results });
         if (turn.text && !turn.text.endsWith("\n")) turn.text += "\n\n";
       }
+      if (p !== first) turn.text += `\n\n*Answered by ${PROVIDERS[p].name.replace(/ \(.*\)$/, "")} · ${modelOf(p)} (${PROVIDERS[first].name.replace(/ \(.*\)$/, "")} hit its free limit).*`;
+      // Keep only the question and the answer for later turns: the files read along the way would be resent
+      // with every future request and burn through free token limits.
+      c.messages.splice(startLen, Infinity, { role: "user", text: question }, { role: "assistant", text: guard(turn.text), via: "text" });
     } catch (e) {
-      turn.text += (turn.text ? "\n\n" : "") + "**" + errorText(e, p) + "**";
+      turn.text += (turn.text ? "\n\n" : "") + "**" + errorText(e, (e && e.provider) || p) + "**";
       // keep the history valid (no tool call without its result): forget this exchange for the model
       c.messages.length = startLen;
     } finally {
@@ -583,6 +673,7 @@ ${ctx.readme}
     container.innerHTML = `<div class="ai-pane">
       <div class="ai-intro">
         <strong>AI assistant</strong> <span class="muted">· ${key ? esc(label()) + " · " : ""}Socratic mode</span>
+        ${key && backups(current()).length ? `<span class="muted small">· backup: ${esc(backups(current()).map((q) => PROVIDERS[q].name.replace(/ \(.*\)$/, "")).join(", "))}</span>` : ""}
         <p class="muted small">It can read your code, the tests and your last run, explain them and ask guiding questions.
         Like an interview round, it <b>won't</b> point at the bug or write a fix.</p>
       </div>
@@ -632,6 +723,8 @@ ${ctx.readme}
       <datalist id="aiModels"></datalist>
       <p class="small muted" id="aiModelHint"></p>
       <label class="small"><input type="checkbox" id="aiRemember" checked> Remember the key on this browser</label>
+      <p class="small muted"><b>Tip:</b> free tiers allow only a few requests a minute. Save keys for two or more providers
+      (pick each one above and press Save): when one hits its limit, the assistant switches to the next by itself.</p>
       <ol class="small ai-steps" id="aiSteps"></ol>
       <div><button class="btn primary sm">Save</button>
       ${existing ? '<button type="button" class="btn ghost sm" id="aiCancel">Cancel</button> <button type="button" class="btn ghost sm" id="aiForget">Forget key</button>' : ""}</div>
