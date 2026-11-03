@@ -1,7 +1,8 @@
 /*
  * AI debugging assistant + interview mode for MachineCodingLab's debug projects.
  *
- * Runs entirely in the browser with the visitor's own Anthropic API key (sent only to api.anthropic.com).
+ * Runs entirely in the browser with the visitor's own key for an AI provider of their choice (Gemini, Groq, OpenRouter,
+ * Claude, a local Ollama...); the key is sent only to that provider's API.
  * The assistant is a Socratic guide: it can read the visitor's current code, the tests, the spec and the last
  * test run through read-only tools, explain them and ask guiding questions, but it never says what is wrong
  * or writes a fix. The reference solution is never given to this module.
@@ -17,41 +18,97 @@
 (function () {
   "use strict";
 
-  const SDK_URL = "https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.137.0/+esm";
-  const MODEL = "claude-haiku-5-5";
-  const KEY_LS = "buildlab.ai.key";
   const MAX_TOOL_ROUNDS = 12;
 
   let ctx = null;        // the open project
-  let chat = null;       // { projectKey, messages: [...api messages], view: [...rendered turns] }
+  let chat = null;       // { projectKey, messages: [...neutral messages], view: [...rendered turns] }
   let busy = false;
   let container = null;
   let interview = null;  // the running interview, see below
-  let sdk = null;
 
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const lsGet = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch { return d; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage off */ } };
 
-  // ------------------------------------------------------------------ key
+  // ------------------------------------------------------------------ providers (same set as AlgoScope)
+  // The visitor picks a provider and brings their own key. Keys stay in this browser and go only to that
+  // provider's API. Every provider here supports tool calling, which the assistant needs to read the repo.
 
-  function getKey() {
+  const PROVIDERS = {
+    gemini: { name: "Google Gemini", kind: "gemini", base: "https://generativelanguage.googleapis.com/v1beta", keyPrefix: ["AIza", "AQ."],
+      placeholder: "AIza… or AQ.…", keyUrl: "https://aistudio.google.com/apikey", model: "gemini-flash-latest",
+      free: "Free: sign in with any Google account, no card needed (daily limits).",
+      steps: ["Sign in at Google AI Studio with your Google account.", "Press Get API key → Create API key.", "Copy the key (starts with AIza or AQ.)."] },
+    groq: { name: "Groq", kind: "openai", base: "https://api.groq.com/openai/v1", keyPrefix: "gsk_", placeholder: "gsk_…",
+      keyUrl: "https://console.groq.com/keys", model: "openai/gpt-oss-120b",
+      free: "Free tier with per-minute and daily limits; very fast open models.",
+      steps: ["Sign in at console.groq.com.", "Open API Keys and press Create API Key.", "Copy the key (starts with gsk_)."] },
+    openrouter: { name: "OpenRouter", kind: "openai", base: "https://openrouter.ai/api/v1", keyPrefix: "sk-or-", placeholder: "sk-or-v1-…",
+      keyUrl: "https://openrouter.ai/settings/keys", model: "",
+      free: "Free models (ending in :free): about 20 requests a minute, 50 a day. No card needed.",
+      steps: ["Sign in at openrouter.ai (Google or GitHub works).", "Open Settings → API Keys and press Create key.", "Copy the key (starts with sk-or-v1-)."] },
+    cerebras: { name: "Cerebras", kind: "openai", base: "https://api.cerebras.ai/v1", keyPrefix: "csk-", placeholder: "csk-…",
+      keyUrl: "https://cloud.cerebras.ai", model: "",
+      free: "Free tier with daily limits; very fast.",
+      steps: ["Sign in at cloud.cerebras.ai.", "Open API Keys and create a key.", "Copy the key (starts with csk-)."] },
+    mistral: { name: "Mistral", kind: "openai", base: "https://api.mistral.ai/v1", keyPrefix: "", placeholder: "Mistral API key",
+      keyUrl: "https://console.mistral.ai/api-keys", model: "mistral-medium-latest",
+      free: "Free 'Experiment' plan with rate limits (phone verification).",
+      steps: ["Sign in at console.mistral.ai and pick a plan (Experiment is free).", "Open API Keys and press Create new key.", "Copy the key."] },
+    anthropic: { name: "Anthropic (Claude)", kind: "anthropic", base: "https://api.anthropic.com/v1", keyPrefix: "sk-ant-", placeholder: "sk-ant-…",
+      keyUrl: "https://console.anthropic.com/settings/keys", model: "claude-haiku-5-5", models: ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"],
+      free: "Paid: needs credits on the Anthropic Console (a Claude Pro plan doesn't include API use). Haiku costs a few cents a session.",
+      steps: ["Sign in to the Anthropic Console and add credits under Billing.", "Open Settings → API Keys and press Create Key.", "Copy the key (starts with sk-ant-)."] },
+    openai: { name: "OpenAI", kind: "openai", base: "https://api.openai.com/v1", keyPrefix: "sk-", placeholder: "sk-…",
+      keyUrl: "https://platform.openai.com/api-keys", model: "",
+      filter: (id) => /^(gpt-|o\d)/.test(id) && !/audio|realtime|transcribe|tts|image|search|instruct/.test(id),
+      free: "Paid: needs credits on platform.openai.com (separate from a ChatGPT subscription).",
+      steps: ["Sign in at platform.openai.com and add credits under Billing.", "Open API keys and press Create new secret key.", "Copy the key (starts with sk-)."] },
+    deepseek: { name: "DeepSeek", kind: "openai", base: "https://api.deepseek.com", keyPrefix: "sk-", placeholder: "sk-…",
+      keyUrl: "https://platform.deepseek.com/api_keys", model: "deepseek-chat",
+      free: "Paid, but very cheap. Top up a small balance first.",
+      steps: ["Sign in at platform.deepseek.com and top up a balance.", "Open API keys and press Create new API key.", "Copy the key (starts with sk-)."] },
+    local: { name: "Local model (Ollama, LM Studio)", kind: "openai", base: "http://localhost:11434/v1", keyPrefix: "", placeholder: "Not needed for Ollama",
+      keyOptional: true, editableBase: true, model: "",
+      free: "Runs on your own computer, free and private. Pick a model that supports tool calling (e.g. qwen3, llama3.1).",
+      steps: ["Install Ollama (ollama.com) and pull a model with tool support, e.g. ollama pull qwen3.",
+        `Start it allowing this site: set OLLAMA_ORIGINS=${location.origin}, then ollama serve.`,
+        "Leave the address as http://localhost:11434/v1 (LM Studio: http://localhost:1234/v1)."] },
+  };
+
+  const raw = {
+    get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+    set(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch { /* storage off */ } },
+  };
+  const K = { provider: "buildlab.ai.provider", key: (p) => "buildlab.ai.key." + p, model: (p) => "buildlab.ai.model." + p, base: (p) => "buildlab.ai.base." + p };
+  const memKeys = {}; // keys kept for this page only when storage is off
+  /** Keys live in sessionStorage (gone with the tab) unless "Remember" is ticked. */
+  const keyStore = {
+    get(p) { try { return sessionStorage.getItem(K.key(p)) || localStorage.getItem(K.key(p)) || memKeys[p] || ""; } catch { return memKeys[p] || ""; } },
+    remembered(p) { try { return !!localStorage.getItem(K.key(p)); } catch { return false; } },
+    set(p, v, remember) {
+      memKeys[p] = v;
+      try {
+        localStorage.removeItem(K.key(p)); sessionStorage.removeItem(K.key(p));
+        if (v) (remember ? localStorage : sessionStorage).setItem(K.key(p), v);
+      } catch { /* storage off */ }
+    },
+  };
+  // The first version only had an Anthropic key: move it to the Anthropic slot once.
+  (() => {
     try {
-      return sessionStorage.getItem(KEY_LS) || localStorage.getItem(KEY_LS) || "";
-    } catch {
-      return "";
-    }
-  }
-  function setKey(key, remember) {
-    try {
-      sessionStorage.removeItem(KEY_LS);
-      localStorage.removeItem(KEY_LS);
-      if (key) (remember ? localStorage : sessionStorage).setItem(KEY_LS, key);
-    } catch { /* storage off: the key lives for this page only */ }
-    memKey = key;
-  }
-  let memKey = "";
-  const currentKey = () => getKey() || memKey;
+      for (const s of [localStorage, sessionStorage]) {
+        const old = s.getItem("buildlab.ai.key");
+        if (old) { s.setItem(K.key("anthropic"), old); s.removeItem("buildlab.ai.key"); if (!raw.get(K.provider)) raw.set(K.provider, "anthropic"); }
+      }
+    } catch { /* storage off */ }
+  })();
+
+  const current = () => (PROVIDERS[raw.get(K.provider)] ? raw.get(K.provider) : "gemini");
+  const baseOf = (p) => ((PROVIDERS[p].editableBase && raw.get(K.base(p))) || PROVIDERS[p].base).replace(/\/+$/, "");
+  const modelOf = (p) => raw.get(K.model(p)) || PROVIDERS[p].model;
+  const ready = () => { const p = current(); return !!((keyStore.get(p) || PROVIDERS[p].keyOptional) && modelOf(p)); };
+  const label = () => { const p = current(); return PROVIDERS[p].name.replace(/ \(.*\)$/, "") + " · " + (modelOf(p).replace(/:free$/, "") || "no model"); };
 
   // ------------------------------------------------------------------ the prompt
 
@@ -224,24 +281,218 @@ ${ctx.readme}
 
   function chatState() {
     if (!chat || chat.projectKey !== projectKey()) {
-      chat = lsGet("buildlab.ai.chat." + projectKey(), null) || { projectKey: projectKey(), messages: [], view: [] };
+      chat = lsGet("buildlab.ai.chat2." + projectKey(), null);
+      if (!chat) {
+        // chats from the first (Anthropic-only) version: keep what was shown, start the model's memory fresh
+        const old = lsGet("buildlab.ai.chat." + projectKey(), null);
+        chat = { projectKey: projectKey(), messages: [], view: (old && old.view) || [] };
+      }
     }
     return chat;
   }
-  const saveChat = () => lsSet("buildlab.ai.chat." + projectKey(), chat);
+  const saveChat = () => lsSet("buildlab.ai.chat2." + projectKey(), chat);
 
-  async function client() {
-    if (!sdk) sdk = await import(SDK_URL);
-    const Anthropic = sdk.default;
-    return { Anthropic, client: new Anthropic({ apiKey: currentKey(), dangerouslyAllowBrowser: true, maxRetries: 2 }) };
+  // ------------------------------------------------------------------ talking to the provider
+  // The chat is stored in a neutral form so the visitor can switch providers mid-chat:
+  //   { role: "user", text } · { role: "assistant", text, calls: [{id, name, input}], via, parts? } · { role: "tool", results: [{id, name, content, isError}] }
+  // Tool exchanges are replayed only to the provider kind that made them; others see just the text.
+
+  const schemaOf = (t) => t.input_schema;
+  /** Gemini takes an OpenAPI subset: no additionalProperties/minimum, and no empty object schemas. */
+  function geminiSchema(s) {
+    if (!s || !s.properties || !Object.keys(s.properties).length) return undefined;
+    const props = {};
+    for (const [k, v] of Object.entries(s.properties)) props[k] = { type: v.type, ...(v.description ? { description: v.description } : {}) };
+    return { type: "object", properties: props, ...(s.required ? { required: s.required } : {}) };
+  }
+
+  function history(messages, kind) {
+    const out = [];
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.role === "tool") {
+        const prev = messages[i - 1];
+        if (prev && prev.role === "assistant" && prev.via === kind) out.push(m);
+        continue;
+      }
+      if (m.role === "assistant" && m.via !== kind) {
+        if (m.text && m.text.trim()) out.push({ role: "assistant", text: m.text, via: kind });
+        continue;
+      }
+      out.push(m);
+    }
+    // merge neighbours that ended up with the same role (only plain-text ones)
+    const merged = [];
+    for (const m of out) {
+      const last = merged[merged.length - 1];
+      if (last && last.role === m.role && m.role !== "tool" && !(last.calls && last.calls.length) && !(m.calls && m.calls.length) && !last.parts && !m.parts) {
+        merged[merged.length - 1] = { ...last, text: (last.text || "") + "\n\n" + (m.text || "") };
+      } else merged.push(m);
+    }
+    return merged;
+  }
+
+  function buildRequest(p, messages, system) {
+    const P = PROVIDERS[p], key = keyStore.get(p), model = modelOf(p), base = baseOf(p);
+    const msgs = history(messages, P.kind);
+    const headers = { "Content-Type": "application/json" };
+    if (P.kind === "anthropic") {
+      Object.assign(headers, { "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" });
+      const body = {
+        model, max_tokens: 16000, stream: true, system, cache_control: { type: "ephemeral" },
+        tools: TOOLS.map((t) => ({ name: t.name, description: t.description, input_schema: schemaOf(t) })),
+        messages: msgs.map((m) => {
+          if (m.role === "user") return { role: "user", content: m.text };
+          if (m.role === "tool") return { role: "user", content: m.results.map((r) => ({ type: "tool_result", tool_use_id: r.id, content: r.content, ...(r.isError ? { is_error: true } : {}) })) };
+          const content = [];
+          if (m.text) content.push({ type: "text", text: m.text });
+          for (const c of m.calls || []) content.push({ type: "tool_use", id: c.id, name: c.name, input: c.input || {} });
+          return { role: "assistant", content: content.length ? content : [{ type: "text", text: "…" }] };
+        }),
+      };
+      if (/^claude-(fable|opus|sonnet|haiku)-5|^claude-opus-4-[5-8]|^claude-sonnet-4-6/.test(model)) body.output_config = { effort: "medium" };
+      return { url: base + "/messages", headers, body };
+    }
+    if (P.kind === "gemini") {
+      headers["x-goog-api-key"] = key;
+      const body = {
+        systemInstruction: { parts: [{ text: system }] },
+        tools: [{ functionDeclarations: TOOLS.map((t) => { const s = geminiSchema(schemaOf(t)); return { name: t.name, description: t.description, ...(s ? { parameters: s } : {}) }; }) }],
+        contents: msgs.map((m) => {
+          if (m.role === "user") return { role: "user", parts: [{ text: m.text }] };
+          if (m.role === "tool") return { role: "user", parts: m.results.map((r) => ({ functionResponse: { name: r.name, ...(r.nativeId ? { id: r.nativeId } : {}), response: r.isError ? { error: r.content } : { result: r.content } } })) };
+          return { role: "model", parts: m.parts && m.parts.length ? m.parts : [{ text: m.text || "…" }] };
+        }),
+      };
+      return { url: `${base}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, headers, body };
+    }
+    if (key) headers.Authorization = "Bearer " + key;
+    if (p === "openrouter") Object.assign(headers, { "HTTP-Referer": location.origin, "X-Title": "MachineCodingLab" });
+    const body = {
+      model, stream: true,
+      tools: TOOLS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: schemaOf(t) } })),
+      messages: [{ role: "system", content: system }],
+    };
+    for (const m of msgs) {
+      if (m.role === "user") body.messages.push({ role: "user", content: m.text });
+      else if (m.role === "tool") for (const r of m.results) body.messages.push({ role: "tool", tool_call_id: r.id, content: r.content });
+      else {
+        const calls = (m.calls || []).map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.input || {}) } }));
+        body.messages.push(calls.length ? { role: "assistant", content: m.text || null, tool_calls: calls } : { role: "assistant", content: m.text || "…" });
+      }
+    }
+    if (p === "openai") body.max_completion_tokens = 16000; else if (p !== "local") body.max_tokens = 8000;
+    return { url: base + "/chat/completions", headers, body };
+  }
+
+  let idSeq = 0;
+  const newId = () => "call_" + Date.now().toString(36) + (idSeq++).toString(36);
+
+  /** One streamed request. Returns { text, calls, parts, stop }; onText gets each text delta. */
+  async function callModel(p, messages, system, onText) {
+    const P = PROVIDERS[p];
+    const { url, headers, body } = buildRequest(p, messages, system);
+    let res;
+    try { res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) }); }
+    catch { throw { code: p === "local" ? "local_unreachable" : "network" }; }
+    if (!res.ok) {
+      let msg = "";
+      try { const j = await res.json(); const e = Array.isArray(j) ? j[0] && j[0].error : j.error; msg = (e && (e.message || e)) || j.message || ""; } catch { /* not JSON */ }
+      msg = String(msg).slice(0, 300);
+      const bad = res.status === 401 || res.status === 403 || /API_KEY_INVALID|invalid.*key|incorrect api key/i.test(msg);
+      const noTools = /tool|function/i.test(msg) && /support|not available|unsupported/i.test(msg);
+      throw { code: bad ? "bad_key" : noTools ? "no_tools" : res.status === 402 || /credit balance/i.test(msg) ? "no_credit" : res.status === 429 ? "rate_limited" : res.status === 404 ? "bad_model" : "upstream", message: msg };
+    }
+    const out = { text: "", calls: [], parts: [], stop: "" };
+    const blocks = {};   // anthropic: index -> block being streamed
+    const oaCalls = {};  // openai: index -> call being streamed
+    const handle = (j) => {
+      if (P.kind === "anthropic") {
+        if (j.type === "content_block_start") blocks[j.index] = { ...j.content_block, json: "" };
+        else if (j.type === "content_block_delta") {
+          if (j.delta.type === "text_delta") { out.text += j.delta.text; onText(j.delta.text); }
+          else if (j.delta.type === "input_json_delta" && blocks[j.index]) blocks[j.index].json += j.delta.partial_json;
+        } else if (j.type === "content_block_stop") {
+          const b = blocks[j.index];
+          if (b && b.type === "tool_use") { let input = {}; try { input = b.json ? JSON.parse(b.json) : {}; } catch { /* bad JSON: empty input */ } out.calls.push({ id: b.id, name: b.name, input }); }
+        } else if (j.type === "message_delta" && j.delta && j.delta.stop_reason) out.stop = j.delta.stop_reason;
+        else if (j.type === "error") throw { code: "upstream", message: j.error && j.error.message };
+        return;
+      }
+      if (P.kind === "gemini") {
+        if (j.error) throw { code: "upstream", message: j.error.message };
+        const c = j.candidates && j.candidates[0];
+        if (!c) return;
+        if (c.finishReason === "SAFETY") out.stop = "refusal";
+        for (const part of (c.content && c.content.parts) || []) {
+          out.parts.push(part);
+          if (part.functionCall) out.calls.push({ id: newId(), nativeId: part.functionCall.id, name: part.functionCall.name, input: part.functionCall.args || {} });
+          else if (part.text && !part.thought) { out.text += part.text; onText(part.text); }
+        }
+        return;
+      }
+      if (j.error) throw { code: "upstream", message: j.error.message || String(j.error) };
+      const ch = j.choices && j.choices[0];
+      if (!ch) return;
+      const d = ch.delta || {};
+      if (d.content) { out.text += d.content; onText(d.content); }
+      for (const tc of d.tool_calls || []) {
+        const slot = oaCalls[tc.index ?? 0] || (oaCalls[tc.index ?? 0] = { id: "", name: "", args: "" });
+        if (tc.id) slot.id = tc.id;
+        if (tc.function && tc.function.name) slot.name += tc.function.name;
+        if (tc.function && tc.function.arguments) slot.args += tc.function.arguments;
+      }
+      if (ch.finish_reason) out.stop = ch.finish_reason;
+    };
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+        let j;
+        try { j = JSON.parse(data); } catch { continue; }
+        handle(j);
+      }
+    }
+    for (const k of Object.keys(oaCalls).sort((a, b) => a - b)) {
+      const s = oaCalls[k];
+      if (!s.name) continue;
+      let input = {};
+      try { input = s.args ? JSON.parse(s.args) : {}; } catch { /* bad JSON: empty input */ }
+      out.calls.push({ id: s.id || newId(), name: s.name, input });
+    }
+    return out;
+  }
+
+  function errorText(e, p) {
+    const P = PROVIDERS[p], name = P.name.replace(/ \(.*\)$/, "");
+    switch (e && e.code) {
+      case "bad_key": return `${name} rejected the API key. Check it in AI settings below.`;
+      case "no_credit": return `Your ${name} account has no credit left. Add credits, or switch to a free provider (Gemini, Groq, OpenRouter) in AI settings.`;
+      case "rate_limited": return `${name} rate-limited this key (free tiers allow a few requests a minute). Wait a moment and ask again.`;
+      case "bad_model": return `${name} doesn't know the model “${modelOf(p)}”. Pick another one in AI settings.` + (e.message ? ` (${e.message})` : "");
+      case "no_tools": return `The model “${modelOf(p)}” can't use tools, so it can't read the code. Pick another model in AI settings.`;
+      case "local_unreachable": return "Couldn't reach your local model server. Is it running and allowing this site (OLLAMA_ORIGINS)?";
+      case "network": return `Couldn't reach ${name}. Check your connection.`;
+      default: return `${name} returned an error` + (e && e.message ? `: ${e.message}` : (e instanceof Error ? `: ${e.message}` : "."));
+    }
   }
 
   async function ask(question) {
     if (busy || !question.trim()) return;
     const c = chatState();
     busy = true;
+    const p = current();
     const startLen = c.messages.length;
-    c.messages.push({ role: "user", content: question });
+    c.messages.push({ role: "user", text: question });
     c.view.push({ role: "user", text: question });
     const turn = { role: "assistant", text: "", tools: 0 };
     c.view.push(turn);
@@ -253,50 +504,33 @@ ${ctx.readme}
     draw();
     try {
       await refreshQuoteIndex();
-      const { Anthropic, client: api } = await client();
+      const system = systemPrompt();
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        const stream = api.messages.stream({
-          model: MODEL,
-          max_tokens: 64000,
-          output_config: { effort: "medium" },
-          cache_control: { type: "ephemeral" },
-          system: systemPrompt(),
-          tools: TOOLS,
-          messages: c.messages,
-        });
-        stream.on("text", (delta) => {
-          turn.text += delta;
-          updateLast(turn.text);
-        });
-        const message = await stream.finalMessage();
-        if (message.stop_reason === "refusal") {
+        const reply = await callModel(p, c.messages, system, (delta) => { turn.text += delta; updateLast(turn.text); });
+        if (reply.stop === "refusal") {
           turn.text += (turn.text ? "\n\n" : "") + "*The model declined to answer that. Try asking about the code another way.*";
           break;
         }
-        c.messages.push({ role: "assistant", content: message.content });
-        const uses = message.content.filter((b) => b.type === "tool_use");
-        if (message.stop_reason !== "tool_use" || !uses.length) break;
+        c.messages.push({ role: "assistant", text: reply.text, calls: reply.calls, via: PROVIDERS[p].kind, ...(reply.parts.length ? { parts: reply.parts } : {}) });
+        if (!reply.calls.length) {
+          if (!turn.text.trim()) turn.text = "*The model returned an empty answer. Try asking again, or pick another model in AI settings.*";
+          break;
+        }
         const results = [];
-        for (const u of uses) {
+        for (const u of reply.calls) {
           turn.tools++;
           if (interview) interview.toolCalls++;
           setStatus(toolLabel(u));
-          const out = await runTool(u.name, u.input || {});
-          results.push(typeof out === "string"
-            ? { type: "tool_result", tool_use_id: u.id, content: out }
-            : { type: "tool_result", tool_use_id: u.id, content: out.error, is_error: true });
+          const res = await runTool(u.name, u.input || {});
+          results.push(typeof res === "string"
+            ? { id: u.id, nativeId: u.nativeId, name: u.name, content: res }
+            : { id: u.id, nativeId: u.nativeId, name: u.name, content: res.error, isError: true });
         }
-        c.messages.push({ role: "user", content: results });
+        c.messages.push({ role: "tool", results });
         if (turn.text && !turn.text.endsWith("\n")) turn.text += "\n\n";
       }
     } catch (e) {
-      const A = sdk && sdk.default;
-      let msg = "Something went wrong talking to the API: " + (e && e.message ? e.message : e);
-      if (A && e instanceof A.AuthenticationError) msg = "The API key was rejected. Check it in the key settings below.";
-      else if (A && e instanceof A.PermissionDeniedError) msg = "This key can't use " + MODEL + ". Check your Anthropic account.";
-      else if (A && e instanceof A.RateLimitError) msg = "Rate limited by the API. Wait a moment and ask again.";
-      else if (A && e instanceof A.APIConnectionError) msg = "Couldn't reach the Anthropic API. Check your connection.";
-      turn.text += (turn.text ? "\n\n" : "") + "**" + msg + "**";
+      turn.text += (turn.text ? "\n\n" : "") + "**" + errorText(e, p) + "**";
       // keep the history valid (no tool call without its result): forget this exchange for the model
       c.messages.length = startLen;
     } finally {
@@ -342,13 +576,13 @@ ${ctx.readme}
   function draw() {
     if (!container || !ctx) return;
     const c = chatState();
-    const key = currentKey();
+    const key = ready();
     const turns = c.view.map((t, i) => `<div class="ai-msg ${t.role}" data-i="${i}">${t.role === "user"
       ? esc(t.text) : (md(guard(t.text)) || "")}${t.role === "assistant" && busy && i === c.view.length - 1
       ? '<div class="ai-status"><span class="spinner"></span> <span id="aiStatus">Thinking…</span></div>' : ""}</div>`).join("");
     container.innerHTML = `<div class="ai-pane">
       <div class="ai-intro">
-        <strong>AI assistant</strong> <span class="muted">· ${esc(MODEL)} · Socratic mode</span>
+        <strong>AI assistant</strong> <span class="muted">· ${key ? esc(label()) + " · " : ""}Socratic mode</span>
         <p class="muted small">It can read your code, the tests and your last run, explain them and ask guiding questions.
         Like an interview round, it <b>won't</b> point at the bug or write a fix.</p>
       </div>
@@ -359,7 +593,7 @@ ${ctx.readme}
         </form>
         <div class="ai-foot small muted">
           <button type="button" class="linkish" id="aiClear">Clear chat</button> ·
-          <button type="button" class="linkish" id="aiKeyBtn">API key</button>
+          <button type="button" class="linkish" id="aiKeyBtn">AI settings</button>
         </div>` : keyForm()}
     </div>`;
     const log = container.querySelector("#aiLog");
@@ -386,29 +620,118 @@ ${ctx.readme}
   }
 
   function keyForm(existing) {
+    const options = Object.entries(PROVIDERS).map(([id, P]) => `<option value="${id}">${esc(P.name)}</option>`).join("");
     return `<form class="ai-key" id="aiKeyForm">
-      <p class="small">The assistant runs on <b>your own Anthropic API key</b>. It's kept in this browser and sent only to
-      api.anthropic.com, never to this site's server. ${esc(MODEL)} is cheap: a long session usually costs a few cents.
-      Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.</p>
-      <input type="password" id="aiKey" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" value="">
-      <label class="small"><input type="checkbox" id="aiRemember" checked> Remember on this browser</label>
-      <div><button class="btn primary sm">Save key</button>
-      ${existing ? '<button type="button" class="btn ghost sm" id="aiForget">Forget key</button>' : ""}</div>
+      <p class="small">The assistant runs on <b>your own AI key</b> from any provider below; Google Gemini, Groq and
+      OpenRouter have free tiers. The key stays in this browser and goes only to that provider, never to this site's server.</p>
+      <label class="small ai-field">Provider <select id="aiProv">${options}</select></label>
+      <p class="small muted" id="aiFree"></p>
+      <label class="small ai-field" id="aiBaseRow" hidden>Server address <input id="aiBase" spellcheck="false" autocomplete="off"></label>
+      <label class="small ai-field"><span id="aiKeyLabel">API key</span> <input type="password" id="aiKey" autocomplete="off" spellcheck="false"></label>
+      <label class="small ai-field">Model <input id="aiModel" list="aiModels" spellcheck="false" autocomplete="off" placeholder="model id"></label>
+      <datalist id="aiModels"></datalist>
+      <p class="small muted" id="aiModelHint"></p>
+      <label class="small"><input type="checkbox" id="aiRemember" checked> Remember the key on this browser</label>
+      <ol class="small ai-steps" id="aiSteps"></ol>
+      <div><button class="btn primary sm">Save</button>
+      ${existing ? '<button type="button" class="btn ghost sm" id="aiCancel">Cancel</button> <button type="button" class="btn ghost sm" id="aiForget">Forget key</button>' : ""}</div>
     </form>`;
+  }
+
+  /** The provider's current models, loaded live where possible (they change often); only models that can use tools. */
+  let modelsReq = 0;
+  async function loadModels(form, p) {
+    const req = ++modelsReq, stale = () => req !== modelsReq;
+    const P = PROVIDERS[p], hint = form.querySelector("#aiModelHint"), dl = form.querySelector("#aiModels"), input = form.querySelector("#aiModel");
+    const key = form.querySelector("#aiKey").value.trim() || keyStore.get(p);
+    const base = (form.querySelector("#aiBase").value.trim() || P.base).replace(/\/+$/, "");
+    const fill = (ids) => { dl.innerHTML = ids.map((id) => `<option value="${esc(id)}"></option>`).join(""); };
+    fill(P.models || []);
+    if (!key && !P.keyOptional && p !== "openrouter") { hint.textContent = "Add a key to load this provider's models, or type a model id."; return; }
+    hint.textContent = "Loading the current models…";
+    try {
+      let ids = [];
+      if (P.kind === "anthropic") {
+        const j = await (await fetch(base + "/models?limit=100", { headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" } })).json();
+        ids = (j.data || []).map((m) => m.id);
+        ids = [...new Set([...(P.models || []).filter((m) => ids.includes(m)), ...ids])];
+      } else if (P.kind === "gemini") {
+        const j = await (await fetch(base + "/models?pageSize=200", { headers: { "x-goog-api-key": key } })).json();
+        const ver = (id) => { const v = id.match(/gemini-(\d+(?:\.\d+)?)/); return v ? parseFloat(v[1]) : 0; };
+        const rank = (id) => (/-latest$/.test(id) ? 1000 : 0) + ver(id) * 10 - (/preview|exp/.test(id) ? 5 : 0) + (/flash/.test(id) && !/lite/.test(id) ? 0.2 : /pro/.test(id) ? 0.1 : 0);
+        ids = (j.models || []).filter((m) => (m.supportedGenerationMethods || []).includes("generateContent") && /gemini/.test(m.name) && !/embedding|image|tts|audio|live|robotics|computer-use/.test(m.name))
+          .map((m) => m.name.replace(/^models\//, "")).sort((a, b) => rank(b) - rank(a));
+      } else {
+        const j = await (await fetch(base + "/models", { headers: key ? { Authorization: "Bearer " + key } : {} })).json();
+        const list = j.data || j.models || [];
+        if (p === "openrouter") {
+          // free models that support tool calling, biggest first
+          const size = (id) => { const s = [...id.matchAll(/(\d+(?:\.\d+)?)b(?![a-z])/gi)].map((x) => parseFloat(x[1])); return (s.length ? Math.max(...s) : 100) - (/small|mini|nano|lite/i.test(id) ? 1000 : 0); };
+          ids = list.filter((m) => /:free$/.test(m.id) && (m.supported_parameters || []).includes("tools")).map((m) => m.id).sort((a, b) => size(b) - size(a));
+        } else {
+          ids = list.map((m) => m.id || m.name).filter(Boolean)
+            .filter((id) => (P.filter ? P.filter(id) : true) && !/embed|whisper|tts|audio|guard|rerank|moderation|image|transcribe|ocr/i.test(id)).sort();
+        }
+      }
+      if (stale()) return;
+      if (!ids.length) throw new Error("empty");
+      fill(ids);
+      if (!input.value || !ids.includes(input.value)) input.value = ids.includes(modelOf(p)) ? modelOf(p) : ids.includes(P.model) ? P.model : ids[0];
+      hint.textContent = `${ids.length} model${ids.length === 1 ? "" : "s"} available. Click the box to pick another, or type any model id.`;
+    } catch {
+      if (stale()) return;
+      hint.textContent = p === "local" ? "Couldn't reach the local server. Is it running and allowing this site? You can still type a model name."
+        : "Couldn't load the model list (check the key). You can still type a model id.";
+    }
   }
 
   function bindKeyForm() {
     const form = container.querySelector("#aiKeyForm");
     if (!form) return;
+    const $ = (s) => form.querySelector(s);
+    const show = (p) => {
+      const P = PROVIDERS[p];
+      $("#aiProv").value = p;
+      $("#aiKey").value = keyStore.get(p);
+      $("#aiKey").placeholder = P.placeholder;
+      $("#aiRemember").checked = keyStore.get(p) ? keyStore.remembered(p) : true;
+      $("#aiKeyLabel").textContent = P.name.replace(/ \(.*\)$/, "") + " API key" + (P.keyOptional ? " (optional)" : "");
+      $("#aiBaseRow").hidden = !P.editableBase;
+      $("#aiBase").value = P.editableBase ? baseOf(p) : "";
+      $("#aiModel").value = modelOf(p);
+      $("#aiFree").textContent = P.free;
+      $("#aiSteps").innerHTML = P.steps.map((s) => `<li>${esc(s)}</li>`).join("")
+        + (P.keyUrl ? `<li>Get the key at <a href="${esc(P.keyUrl)}" target="_blank" rel="noopener">${esc(P.keyUrl.replace(/^https:\/\//, ""))}</a>, paste it above and press <b>Save</b>.</li>` : "<li>Press <b>Save</b>.</li>");
+      delete form.dataset.confirm;
+      loadModels(form, p);
+    };
+    show(current());
+    $("#aiProv").addEventListener("change", () => show($("#aiProv").value));
+    $("#aiKey").addEventListener("change", () => loadModels(form, $("#aiProv").value));
+    $("#aiBase").addEventListener("change", () => loadModels(form, $("#aiProv").value));
     form.addEventListener("submit", (e) => {
       e.preventDefault();
-      const k = container.querySelector("#aiKey").value.trim();
-      if (!/^sk-ant-[\w-]{20,}$/.test(k)) { ctx.toast("That doesn't look like an Anthropic API key (sk-ant-…)"); return; }
-      setKey(k, container.querySelector("#aiRemember").checked);
+      const p = $("#aiProv").value, P = PROVIDERS[p];
+      const k = $("#aiKey").value.trim(), model = $("#aiModel").value.trim();
+      if (!k && !P.keyOptional) { ctx.toast(`Paste your ${P.name.replace(/ \(.*\)$/, "")} API key first`); return; }
+      if (!model) { ctx.toast("Pick a model"); return; }
+      // key formats change, so an unexpected prefix is a warning: pressing Save again uses the key anyway
+      const prefixes = [].concat(P.keyPrefix || []).filter(Boolean);
+      if (k && prefixes.length && !prefixes.some((x) => k.startsWith(x)) && form.dataset.confirm !== k) {
+        form.dataset.confirm = k;
+        ctx.toast(`That doesn't look like a ${P.name} key (usually starts with ${prefixes.join(" or ")}). Press Save again to use it anyway.`);
+        return;
+      }
+      keyStore.set(p, k, $("#aiRemember").checked);
+      raw.set(K.model(p), model);
+      if (P.editableBase) raw.set(K.base(p), $("#aiBase").value.trim());
+      raw.set(K.provider, p);
       draw();
     });
-    const forget = container.querySelector("#aiForget");
-    if (forget) forget.addEventListener("click", () => { setKey("", false); draw(); });
+    const cancel = $("#aiCancel");
+    if (cancel) cancel.addEventListener("click", () => draw());
+    const forget = $("#aiForget");
+    if (forget) forget.addEventListener("click", () => { keyStore.set($("#aiProv").value, "", false); draw(); });
   }
 
   function updateLast(text) {
@@ -565,7 +888,7 @@ ${ctx.readme}
         <li>The solution is locked. At the end you get a report: tests passing, time, test runs, and how you used the AI.</li>
       </ul>
       <label>Time limit <select id="ivMin">${[30, 45, 60, 75, 90].map((m) => `<option ${m === def ? "selected" : ""}>${m}</option>`).join("")}</select> minutes</label>
-      ${currentKey() ? "" : '<p class="small muted">Add your API key in the Assistant tab to use the AI during the round.</p>'}
+      ${ready() ? "" : '<p class="small muted">Add your API key in the Assistant tab to use the AI during the round.</p>'}
       <div class="iv-actions"><button class="btn ghost" id="ivCancel">Cancel</button><button class="btn primary" id="ivGo">Start round</button></div>`;
     document.body.appendChild(dlg);
     dlg.querySelector("#ivCancel").addEventListener("click", () => { dlg.close(); dlg.remove(); });
