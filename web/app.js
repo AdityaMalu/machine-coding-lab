@@ -339,6 +339,14 @@
   async function renderDetail(id) {
     const project = state.projects.find((p) => p.id === id);
     if (!project) return renderList();
+    // a project that exists in just one language (the Spring Boot ones) opens in it, no detour
+    const only = state.projectLangs[id] || ["java"];
+    if (!hasLang(id) && only.length === 1 && state.serverLangs.includes(only[0])) {
+      state.lang = only[0];
+      lsSet("buildlab.lang", state.lang);
+      document.getElementById("langSel").value = state.lang;
+      updateProgress();
+    }
     crumbs.innerHTML = `<a href="/">Projects</a><span class="sep">/</span><strong>${esc(project.title)}</strong>`
       + `<span class="sep">·</span>${LANG_NAMES[state.lang]}`;
     if (!hasLang(id)) return renderUnavailable(project);
