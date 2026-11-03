@@ -296,7 +296,7 @@ li.CodeMirror-hint-active { background: var(--accent-soft); color: var(--text); 
 .cm-goto-flash { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
 
 /* ---------- AI assistant (debug projects) and interview mode */
-.ai-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 10px; }
+.ai-pane { display: flex; flex-direction: column; height: 100%; min-height: 420px; gap: 10px; }
 .ai-intro p { margin: 4px 0 0; }
 .ai-log { flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
 .ai-empty { padding: 10px 2px; }

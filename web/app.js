@@ -161,7 +161,7 @@
 
   function setupLanguagePicker() {
     const sel = document.getElementById("langSel");
-    sel.innerHTML = Object.entries(LANG_NAMES).filter(([k]) => k !== "spring" || state.preview).map(([k, v]) => {
+    sel.innerHTML = Object.entries(LANG_NAMES).map(([k, v]) => {
       const count = state.projects.filter((p) => (state.projectLangs[p.id] || ["java"]).includes(k)).length;
       const missing = !state.serverLangs.includes(k);
       return `<option value="${k}"${missing ? " disabled" : ""}>${v} · ${count} projects${missing ? " (not installed)" : ""}</option>`;
@@ -189,9 +189,8 @@
     const config = await api("/api/config").catch(() => ({ mode: "local", langs: ["java"] }));
     state.hosted = config.mode === "hosted";
     state.serverLangs = config.langs || ["java"];
-    // Spring Boot is a preview track: only shown with ?preview=spring (docs/SPRING_TRACK_PLAN.md)
-    state.preview = new URLSearchParams(location.search).get("preview") === "spring";
-    if (!state.preview) state.serverLangs = state.serverLangs.filter((l) => l !== "spring");
+    // catalog entries marked "preview": true are only listed with ?preview=1 (none right now)
+    state.preview = new URLSearchParams(location.search).has("preview");
     if (state.hosted) migrateStorage();
     const data = await api("/api/projects");
     state.projects = data.projects.filter((p) => state.preview || !p.preview);
