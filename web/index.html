@@ -83,7 +83,8 @@
         <div class="tabs" role="tablist" id="leftTabs">
           <button role="tab" data-tab="spec" class="active">Spec</button>
           <button role="tab" data-tab="tests">Tests</button>
-          <button role="tab" data-tab="solution">Solution</button>
+          <button role="tab" data-tab="solution" id="solutionTab">Solution</button>
+          <button role="tab" data-tab="assistant" id="aiTab" hidden>✦ Assistant</button>
         </div>
       </div>
       <div class="pane-body" id="leftBody"></div>
@@ -98,6 +99,8 @@
           <select id="statusSel" aria-label="Status">
             <option value="todo">To do</option><option value="attempted">Attempted</option><option value="solved">Solved</option>
           </select>
+          <span class="iv-timer" id="ivTimer" hidden></span>
+          <button class="btn ghost" id="ivBtn" hidden title="A timed debugging round with the AI assistant">Interview mode</button>
           <button class="btn ghost" id="resetBtn" title="Restore the starter code">Reset</button>
           <button class="btn ghost" id="saveBtn" title="Ctrl+S">Save</button>
           <button class="btn primary" id="runBtn" title="Ctrl+Enter">
@@ -134,6 +137,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js" integrity="sha384-69mJoUoPPF/C7qPs6lLjvXvrt6w225+rmxWqGO3a1glVjITdnnwPQOtG9FRTd2Ni" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js" integrity="sha384-qCnKPgNYgVO8RO19jShRRAfU75+KVnN1cQy+8CPX/TTwJsUEJ/EpnwKx2UOyLx8c" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="/codeintel.js"></script>
+<script src="/assistant.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -294,3 +294,45 @@ li.CodeMirror-hint-active { background: var(--accent-soft); color: var(--text); 
 .hint-kind { color: var(--muted); font-size: 11px; font-family: var(--sans); }
 .cm-goto-link { text-decoration: underline; color: var(--link) !important; cursor: pointer; }
 .cm-goto-flash { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+
+/* ---------- AI assistant (debug projects) and interview mode */
+.ai-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 10px; }
+.ai-intro p { margin: 4px 0 0; }
+.ai-log { flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
+.ai-empty { padding: 10px 2px; }
+.ai-msg { border-radius: 12px; padding: 9px 12px; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.ai-msg.user { align-self: flex-end; max-width: 88%; background: var(--accent-soft); color: var(--text); white-space: pre-wrap; }
+.ai-msg.assistant { background: var(--surface-2); border: 1px solid var(--border); }
+.ai-msg.assistant p { margin: 0 0 8px; }
+.ai-msg.assistant p:last-child, .ai-msg.assistant ul:last-child, .ai-msg.assistant ol:last-child { margin-bottom: 0; }
+.ai-msg.assistant ul, .ai-msg.assistant ol { margin: 0 0 8px; padding-left: 20px; }
+.ai-msg pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; overflow-x: auto; font: 12.5px/1.5 var(--mono); }
+.ai-msg code { font-family: var(--mono); font-size: .92em; }
+.ai-msg blockquote { margin: 6px 0; padding: 4px 10px; border-left: 3px solid var(--medium); color: var(--muted); }
+.ai-status { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.ai-ask { display: flex; gap: 8px; align-items: flex-end; }
+.ai-ask textarea { flex: 1; resize: vertical; min-height: 44px; max-height: 200px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); font: 14px/1.4 var(--sans); }
+.ai-ask textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ai-key { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.ai-key input[type="password"] { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: var(--mono); }
+.ai-key p { margin: 0; }
+.ai-foot { display: flex; gap: 6px; align-items: center; }
+.linkish { background: none; border: 0; padding: 0; color: var(--link); cursor: pointer; font: inherit; }
+.linkish:hover { text-decoration: underline; }
+.tabs button:disabled { opacity: .45; cursor: not-allowed; }
+.iv-timer { font: 600 13px var(--mono); padding: 4px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.iv-timer.low { background: color-mix(in srgb, var(--fail) 18%, transparent); color: var(--fail); }
+dialog.iv-report { max-width: min(560px, calc(100vw - 32px)); width: 100%; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); padding: 22px; box-shadow: var(--shadow); }
+dialog.iv-report::backdrop { background: rgba(0, 0, 0, .55); }
+dialog.iv-report h2 { margin: 0 0 4px; font-family: var(--display); }
+dialog.iv-report label { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
+.iv-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0; }
+.iv-stats div { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px; text-align: center; }
+.iv-stats b { display: block; font-size: 20px; }
+.iv-stats b.pass { color: var(--pass); }
+.iv-stats span { color: var(--muted); font-size: 12px; }
+.iv-log { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.iv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+@media (max-width: 560px) { .iv-stats { grid-template-columns: repeat(2, 1fr); } }

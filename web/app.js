@@ -403,6 +403,49 @@
     if (firstFile) await openFile(d, firstFile);
     d.hash = codeHash(d);
     renderTestList(d);
+    attachAssistant(d);
+  }
+
+  /** Debug projects get the AI assistant (visitor's own key, never the solution) and interview mode. */
+  function attachAssistant(d) {
+    const on = d.project.kind === "debug" && !!window.LabAssistant;
+    document.getElementById("aiTab").hidden = !on;
+    document.getElementById("ivBtn").hidden = !on;
+    if (!on) return;
+    window.LabAssistant.attach({
+      project: d.project,
+      lang: state.lang,
+      readme: d.info.readme,
+      files: () => {
+        if (d.current && d.cm) d.buffers[d.current] = editorValue(d);
+        return Object.fromEntries(d.info.workspace.map((f) => [f, d.buffers[f] ?? ""]));
+      },
+      testFiles: async () => {
+        if (!d.testSources || Object.keys(d.testSources).length < d.info.tests.length) await loadTestSources(d);
+        return d.testSources;
+      },
+      lastRun: () => {
+        if (!d.compileError && !Object.keys(d.results).length) return null;
+        return {
+          compileError: d.compileError,
+          output: d.extraOutput,
+          stale: d.tests.some((t) => isStale(d, d.results[testKey(t)])),
+          tests: d.tests.map((t) => {
+            const r = d.results[testKey(t)];
+            return { name: t.name, suite: t.suite, method: t.method, status: r ? r.status : null, message: r ? r.message : "" };
+          }),
+        };
+      },
+      setSolutionLocked: (locked) => {
+        d.solutionLocked = locked;
+        const tab = document.getElementById("solutionTab");
+        tab.disabled = locked;
+        tab.title = locked ? "Locked during interview mode" : "";
+        if (locked && document.querySelector('#leftTabs button.active')?.dataset.tab === "solution") showLeft(d, "spec");
+      },
+      showAssistant: () => showLeft(d, "assistant"),
+      toast,
+    });
   }
 
   async function pickInitialFile(d) {
@@ -460,7 +503,13 @@
       body.innerHTML = '<p class="muted">The suite your code must pass. Reading tests is part of the job. '
         + 'Ctrl+click (Cmd+click on a Mac) a name to jump to its declaration.</p>';
       for (const f of d.info.tests) await appendCode(body, d.project.id, "tests", f);
+    } else if (tab === "assistant") {
+      window.LabAssistant.render(body);
     } else if (tab === "solution") {
+      if (d.solutionLocked) {
+        body.innerHTML = '<div class="reveal"><p>The solution is locked while an interview round is running.</p></div>';
+        return;
+      }
       if (!d.solutionRevealed) {
         body.innerHTML = `<div class="reveal"><p>Try it yourself first. Interviews reward the process, not the answer.
           You can also run the tests against the reference solution without reading it.</p>
@@ -969,6 +1018,10 @@
       if (after !== before) setStatus(d.project.id, after);
       document.getElementById("statusSel").value = statusOf(d.project.id);
       if (allPass && before !== "solved") toast("All tests pass. Solved! 🎉");
+      if (window.LabAssistant && d.project.kind === "debug") {
+        const passed = d.tests.filter((t) => { const res = d.results[testKey(t)]; return res && res.status === "PASS" && !isStale(d, res); }).length;
+        window.LabAssistant.onRun({ passed, total: d.tests.length, compileError: d.compileError });
+      }
     } catch (e) {
       d.running = null;
       renderTestList(d);
