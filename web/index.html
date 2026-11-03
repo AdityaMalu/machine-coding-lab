@@ -94,7 +94,10 @@
 
     <div class="pane right">
       <div class="pane-head">
-        <div class="tabs files" id="fileTabs"></div>
+        <button class="icon-btn" id="explorerBtn" title="Show or hide the Explorer" aria-label="Toggle the Explorer" aria-pressed="true">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 4h16v16H4zM9 4v16" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        </button>
+        <div class="ftabs" id="fileTabs" role="tablist"></div>
         <div class="toolbar">
           <select id="statusSel" aria-label="Status">
             <option value="todo">To do</option><option value="attempted">Attempted</option><option value="solved">Solved</option>
@@ -109,7 +112,11 @@
           </button>
         </div>
       </div>
-      <div class="editor-wrap"><textarea id="editor"></textarea></div>
+      <div class="editor-area" id="editorArea">
+        <nav class="explorer" id="explorer" aria-label="Project files"></nav>
+        <div class="explorer-resizer" id="explorerResizer" title="Drag to resize the Explorer"></div>
+        <div class="editor-wrap"><textarea id="editor"></textarea></div>
+      </div>
       <div class="results" id="results">
         <div class="results-head">
           <input type="checkbox" id="selectAll" title="Select all tests" aria-label="Select all tests">

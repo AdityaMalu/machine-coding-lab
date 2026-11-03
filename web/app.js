@@ -362,6 +362,8 @@
       dirty: new Set(),
       cm: null,
       solutionRevealed: false,
+      open: [],
+      collapsed: new Set(),
     };
     state.detail = d;
 
@@ -378,6 +380,7 @@
 
     setupLeftTabs(d);
     setupEditor(d);
+    setupExplorerToggle();
     setupSplitter();
 
     document.getElementById("runBtn").addEventListener("click", () => runTests(d));
@@ -388,6 +391,7 @@
       else await api(`/api/reset/${id}?${langQ()}`, { method: "POST" });
       d.buffers = {};
       d.dirty.clear();
+      d.open = d.open.filter((f) => isTestKey(f) || info.workspace.includes(f));
       for (const f of info.workspace) d.buffers[f] = await loadFile(d, f);
       await openFile(d, d.current, true);
       drawFileTabs(d);
@@ -770,7 +774,7 @@
   }
 
   /** Jumps to where the name at `pos` is declared; repeating it on the same name cycles through matches. */
-  function goToDefinition(d, pos, fromFile = d.current) {
+  function goToDefinition(d, pos, fromFile = isTestKey(d.current) ? TESTS + d.current.slice(TEST_KEY.length) : d.current) {
     if (!window.CodeIntel) return;
     let name = pos.word;
     if (!name) {
@@ -798,17 +802,8 @@
   }
 
   async function revealSymbol(d, hit) {
-    if (hit.file.startsWith(TESTS)) {
-      await showLeft(d, "tests");
-      const view = [...document.querySelectorAll("#leftBody .code-view")].find((v) => v.dataset.file === hit.file.slice(TESTS.length));
-      const el = view && view.querySelector(`.code-line[data-line="${hit.line + 1}"]`);
-      if (!el) return;
-      el.scrollIntoView({ block: "center" });
-      el.classList.add("flash");
-      setTimeout(() => el.classList.remove("flash"), 1600);
-      return;
-    }
-    if (hit.file !== d.current) await openFile(d, hit.file);
+    const target = hit.file.startsWith(TESTS) ? TEST_KEY + hit.file.slice(TESTS.length) : hit.file;
+    if (target !== d.current) await openFile(d, target);
     const cm = d.cm;
     cm.setCursor({ line: hit.line, ch: hit.ch });
     cm.scrollIntoView({ line: hit.line, ch: hit.ch }, cm.getScrollInfo().clientHeight / 3);
@@ -894,7 +889,7 @@
     d.loading = false;
   }
   function markDirty(d) {
-    if (d.loading || !d.current) return;
+    if (d.loading || !d.current || isTestKey(d.current)) return;
     d.buffers[d.current] = editorValue(d);
     if (d.tests) refreshStaleness(d);
     if (state.hosted) {
@@ -911,33 +906,193 @@
     }
   }
 
+  // ------------------------------------------------------------ explorer (VS Code style) and open-file tabs
+  // Editable files are keyed by their workspace path ("payments/PaymentService.java"); test files are opened
+  // read-only under "test:" + their path, so they never mix with the code that is saved and sent to run.
+  const TEST_KEY = "test:";
+  const isTestKey = (f) => typeof f === "string" && f.startsWith(TEST_KEY);
+  const fileName = (f) => f.split("/").pop();
+  const EXPLORER_LS = "buildlab.explorer";
+
+  function fileIcon(name) {
+    const ext = name.includes(".") ? name.split(".").pop().toLowerCase() : "";
+    const map = { java: ["J", "ic-java"], py: ["Py", "ic-py"], go: ["Go", "ic-go"], cpp: ["C+", "ic-cpp"], hpp: ["H", "ic-cpp"], h: ["H", "ic-cpp"],
+      properties: ["⚙", "ic-conf"], yml: ["⚙", "ic-conf"], yaml: ["⚙", "ic-conf"], md: ["M", "ic-md"] };
+    const [label, cls] = map[ext] || ["•", "ic-other"];
+    return `<span class="ficon ${cls}" aria-hidden="true">${label}</span>`;
+  }
+
+  /** Nested {dirs, files} from "a/b/c.java" paths; chains of single-folder directories are joined ("com/acme"). */
+  function buildTree(paths) {
+    const root = { dirs: new Map(), files: [] };
+    for (const p of paths) {
+      const parts = p.split("/");
+      let node = root;
+      for (const dir of parts.slice(0, -1)) {
+        if (!node.dirs.has(dir)) node.dirs.set(dir, { dirs: new Map(), files: [] });
+        node = node.dirs.get(dir);
+      }
+      node.files.push(p);
+    }
+    const compact = (node) => {
+      for (const [name, child] of [...node.dirs]) {
+        compact(child);
+        if (child.files.length === 0 && child.dirs.size === 1) {
+          const [[sub, grand]] = [...child.dirs];
+          node.dirs.delete(name);
+          node.dirs.set(name + "/" + sub, grand);
+        }
+      }
+    };
+    compact(root);
+    return root;
+  }
+
+  function treeHtml(d, node, keyPrefix, folderPath, depth) {
+    const out = [];
+    const dirs = [...node.dirs.keys()].sort((a, b) => a.localeCompare(b));
+    for (const name of dirs) {
+      const path = folderPath ? folderPath + "/" + name : name;
+      const id = keyPrefix + path;
+      const open = !d.collapsed.has(id);
+      out.push(`<button class="tree-row folder" data-folder="${esc(id)}" style="--depth:${depth}" aria-expanded="${open}" title="${esc(path)}">
+        <span class="chev">${open ? "▾" : "▸"}</span><span class="ficon ic-folder" aria-hidden="true">${open ? "📂" : "📁"}</span><span class="tname">${esc(name)}</span></button>`);
+      if (open) out.push(treeHtml(d, node.dirs.get(name), keyPrefix, path, depth + 1));
+    }
+    const files = [...node.files].sort((a, b) => fileName(a).localeCompare(fileName(b)));
+    for (const f of files) {
+      const key = keyPrefix === TEST_KEY ? TEST_KEY + f : f;
+      const active = key === d.current ? " active" : "";
+      const dirty = d.dirty.has(key) ? '<span class="dirty" title="Unsaved changes">●</span>' : "";
+      out.push(`<button class="tree-row file${active}" data-file="${esc(key)}" style="--depth:${depth}" title="${esc(f)}">
+        <span class="chev"></span>${fileIcon(f)}<span class="tname">${esc(fileName(f))}</span>${dirty}</button>`);
+    }
+    return out.join("");
+  }
+
+  function drawExplorer(d) {
+    const el = document.getElementById("explorer");
+    if (!el) return;
+    const section = (id, title, paths, keyPrefix, note) => {
+      const open = !d.collapsed.has("section:" + id);
+      return `<div class="tree-section">
+        <button class="tree-head" data-folder="section:${id}" aria-expanded="${open}"><span class="chev">${open ? "▾" : "▸"}</span>${title}
+          <span class="tree-count">${paths.length}</span>${note ? `<span class="tree-note">${note}</span>` : ""}</button>
+        ${open ? `<div class="tree-body">${treeHtml(d, buildTree(paths), keyPrefix, "", 0)}</div>` : ""}</div>`;
+    };
+    el.innerHTML = `<div class="explorer-title">Explorer</div>`
+      + section("src", "SRC", d.info.workspace, "", "")
+      + section("tests", "TESTS", d.info.tests, TEST_KEY, "read-only");
+    el.querySelectorAll("[data-folder]").forEach((b) => b.addEventListener("click", () => {
+      const id = b.dataset.folder;
+      if (d.collapsed.has(id)) d.collapsed.delete(id);
+      else d.collapsed.add(id);
+      drawExplorer(d);
+    }));
+    el.querySelectorAll("[data-file]").forEach((b) => b.addEventListener("click", () => openFile(d, b.dataset.file)));
+    const active = el.querySelector(".tree-row.active");
+    if (active) active.scrollIntoView({ block: "nearest" });
+  }
+
+  /** Tabs for the files you have open (closable), like an editor's tab bar. */
   function drawFileTabs(d) {
     const tabs = document.getElementById("fileTabs");
-    tabs.innerHTML = d.info.workspace.map((f) => {
-      const name = f.split("/").pop();
-      return `<button data-file="${esc(f)}" class="${f === d.current ? "active" : ""}" title="${esc(f)}">${esc(name)}${d.dirty.has(f) ? '<span class="dirty">●</span>' : ""}</button>`;
+    tabs.innerHTML = d.open.map((f) => {
+      const test = isTestKey(f);
+      const path = test ? f.slice(TEST_KEY.length) : f;
+      return `<div class="ftab${f === d.current ? " active" : ""}${test ? " readonly" : ""}" data-file="${esc(f)}" title="${esc((test ? "tests/" : "") + path)}${test ? " (read-only)" : ""}">
+        ${fileIcon(path)}<span class="ftab-name">${esc(fileName(path))}</span>${test ? '<span class="lock" aria-label="read-only">🔒</span>' : ""}${d.dirty.has(f) ? '<span class="dirty">●</span>' : ""}
+        <button class="ftab-close" title="Close" aria-label="Close ${esc(fileName(path))}">×</button></div>`;
     }).join("");
-    tabs.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => openFile(d, b.dataset.file)));
+    tabs.querySelectorAll(".ftab").forEach((t) => {
+      t.addEventListener("click", (e) => { if (!e.target.closest(".ftab-close")) openFile(d, t.dataset.file); });
+      t.addEventListener("auxclick", (e) => { if (e.button === 1) closeFile(d, t.dataset.file); });
+      t.querySelector(".ftab-close").addEventListener("click", () => closeFile(d, t.dataset.file));
+    });
+    const active = tabs.querySelector(".ftab.active");
+    if (active) active.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (!tabs.dataset.wheel) { // a mouse wheel scrolls the tab strip sideways, as in VS Code
+      tabs.dataset.wheel = "1";
+      tabs.addEventListener("wheel", (e) => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { tabs.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
+    }
+    drawExplorer(d);
+  }
+
+  async function closeFile(d, file) {
+    const i = d.open.indexOf(file);
+    if (i < 0) return;
+    if (d.open.length === 1) return; // keep one file open
+    d.open.splice(i, 1);
+    if (file === d.current) {
+      if (!isTestKey(d.current)) d.buffers[d.current] = editorValue(d);
+      d.current = null;
+      await openFile(d, d.open[Math.min(i, d.open.length - 1)]);
+    } else drawFileTabs(d);
+  }
+
+  function setupExplorerToggle() {
+    const area = document.getElementById("editorArea");
+    const btn = document.getElementById("explorerBtn");
+    const saved = lsGet(EXPLORER_LS, null);
+    const show = saved === null ? !matchMedia("(max-width: 900px)").matches : !!saved;
+    area.classList.toggle("no-explorer", !show);
+    btn.setAttribute("aria-pressed", String(show));
+    // drag the Explorer's edge to resize it (remembered)
+    const ex = document.getElementById("explorer");
+    const grip = document.getElementById("explorerResizer");
+    const width = lsGet(EXPLORER_LS + ".width", null);
+    if (Number.isFinite(width)) ex.style.width = Math.min(480, Math.max(150, width)) + "px";
+    grip.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      grip.classList.add("dragging");
+      const startX = e.clientX, startW = ex.getBoundingClientRect().width;
+      const move = (ev) => { ex.style.width = Math.min(480, Math.max(150, startW + ev.clientX - startX)) + "px"; };
+      const up = () => {
+        grip.classList.remove("dragging");
+        grip.removeEventListener("pointermove", move);
+        grip.removeEventListener("pointerup", up);
+        lsSet(EXPLORER_LS + ".width", Math.round(ex.getBoundingClientRect().width));
+        if (state.detail && state.detail.cm) state.detail.cm.refresh();
+      };
+      grip.addEventListener("pointermove", move);
+      grip.addEventListener("pointerup", up);
+    });
+    btn.addEventListener("click", () => {
+      const on = area.classList.toggle("no-explorer") === false;
+      btn.setAttribute("aria-pressed", String(on));
+      lsSet(EXPLORER_LS, on);
+      if (state.detail && state.detail.cm) state.detail.cm.refresh();
+    });
   }
 
   async function openFile(d, file, forceReload = false) {
     if (!file) return;
-    if (d.current) d.buffers[d.current] = editorValue(d);
+    if (d.current && !isTestKey(d.current)) d.buffers[d.current] = editorValue(d);
     d.current = file;
+    if (!d.open.includes(file)) d.open.push(file);
+    const test = isTestKey(file);
     let text = forceReload ? undefined : d.buffers[file];
     if (text === undefined) {
-      text = await loadFile(d, file);
+      if (test) {
+        const path = file.slice(TEST_KEY.length);
+        if (!d.testSources || d.testSources[path] === undefined) await loadTestSources(d);
+        text = (d.testSources && d.testSources[path]) || "";
+      } else {
+        text = await loadFile(d, file);
+      }
       d.buffers[file] = text;
     }
+    if (d.cm) d.cm.setOption("readOnly", test);
     setEditorValue(d, text);
     drawFileTabs(d);
     if (d.cm) d.cm.focus();
   }
 
   async function saveAll(d) {
-    if (d.current) d.buffers[d.current] = editorValue(d);
+    if (d.current && !isTestKey(d.current)) d.buffers[d.current] = editorValue(d);
     if (state.hosted) {
-      if (d.current) lsSet(codeKey(d.project.id, d.current), d.buffers[d.current]);
+      if (d.current && !isTestKey(d.current)) lsSet(codeKey(d.project.id, d.current), d.buffers[d.current]);
       return;
     }
     const files = [...d.dirty];

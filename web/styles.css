@@ -336,3 +336,49 @@ dialog.iv-report label { display: flex; gap: 8px; align-items: center; margin: 1
 .iv-log { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .iv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 @media (max-width: 560px) { .iv-stats { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---------- explorer (VS Code style) and open-file tabs */
+.editor-area { flex: 1; min-height: 0; display: flex; }
+.editor-area .editor-wrap { flex: 1; min-width: 0; }
+.explorer { width: 230px; flex: none; overflow: auto; border-right: 1px solid var(--border); background: var(--surface-2);
+  font-size: 13px; padding: 6px 0 16px; user-select: none; }
+.editor-area.no-explorer .explorer, .editor-area.no-explorer .explorer-resizer { display: none; }
+.explorer-resizer { width: 5px; flex: none; margin-left: -3px; cursor: col-resize; z-index: 2; }
+.explorer-resizer:hover, .explorer-resizer.dragging { background: var(--accent-soft); }
+.explorer-title { padding: 4px 14px 8px; font: 700 11px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.tree-head { display: flex; align-items: center; gap: 4px; width: 100%; padding: 5px 10px; background: none; border: 0;
+  color: var(--text); font: 700 11.5px var(--sans); letter-spacing: .06em; cursor: pointer; text-align: left; }
+.tree-head:hover { background: var(--surface); }
+.tree-count { margin-left: 4px; color: var(--muted); font-weight: 600; }
+.tree-note { margin-left: auto; color: var(--muted); font-weight: 500; letter-spacing: 0; text-transform: none; font-size: 11px; }
+.tree-body { padding-bottom: 6px; }
+.tree-row { display: flex; align-items: center; gap: 5px; width: 100%; padding: 3px 10px 3px calc(14px + var(--depth) * 14px);
+  background: none; border: 0; border-left: 2px solid transparent; color: var(--text); font: 13px var(--sans);
+  cursor: pointer; text-align: left; white-space: nowrap; }
+.tree-row:hover { background: var(--surface); }
+.tree-row.active { background: var(--accent-soft); border-left-color: var(--accent); }
+.tree-row .tname { overflow: hidden; text-overflow: ellipsis; }
+.tree-row .dirty, .ftab .dirty { color: var(--medium); margin-left: auto; padding-left: 4px; }
+.chev { width: 12px; flex: none; color: var(--muted); font-size: 11px; text-align: center; }
+.ficon { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 16px;
+  font: 700 9.5px var(--mono); border-radius: 4px; }
+.ic-folder { font-size: 13px; min-width: 16px; }
+.ic-java { color: #f0915a; } .ic-py { color: #f2c94c; } .ic-go { color: #4fc3e8; } .ic-cpp { color: #7aa2f7; }
+.ic-conf { color: var(--muted); font-size: 12px; } .ic-md { color: var(--accent); } .ic-other { color: var(--muted); }
+.icon-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px;
+  border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer; }
+.icon-btn:hover { color: var(--text); background: var(--surface); }
+.icon-btn[aria-pressed="true"] { color: var(--accent); }
+.ftabs { display: flex; gap: 2px; overflow-x: auto; flex: 1; min-width: 0; align-self: stretch; align-items: flex-end; scrollbar-width: none; }
+.ftabs::-webkit-scrollbar { display: none; }
+.ftab { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 10px; border-radius: 8px 8px 0 0; cursor: pointer;
+  color: var(--muted); font: 600 12.5px var(--sans); white-space: nowrap; border: 1px solid transparent; border-bottom: 0; }
+.ftab:hover { color: var(--text); background: var(--surface); }
+.ftab.active { color: var(--text); background: var(--surface); border-color: var(--border); box-shadow: inset 0 2px 0 var(--accent); }
+.ftab.readonly .ftab-name { font-style: italic; }
+.ftab .lock { font-size: 10px; opacity: .7; }
+.ftab-close { background: none; border: 0; color: var(--muted); width: 18px; height: 18px; border-radius: 4px; cursor: pointer;
+  font-size: 14px; line-height: 1; opacity: 0; padding: 0; }
+.ftab:hover .ftab-close, .ftab.active .ftab-close { opacity: 1; }
+.ftab-close:hover { background: var(--surface-2); color: var(--text); }
+@media (max-width: 900px) { .explorer { width: 180px; } }
