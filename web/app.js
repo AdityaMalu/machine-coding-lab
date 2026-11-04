@@ -1025,6 +1025,7 @@
     d.open.splice(i, 1);
     if (file === d.current) {
       if (!isTestKey(d.current)) d.buffers[d.current] = editorValue(d);
+      saveView(d); // reopening the file later returns to the same spot
       d.current = null;
       await openFile(d, d.open[Math.min(i, d.open.length - 1)]);
     } else drawFileTabs(d);
@@ -1066,9 +1067,28 @@
     });
   }
 
+  /** Remember where you were in the open file (cursor, selection, scroll, undo history), like an editor does. */
+  function saveView(d) {
+    if (!d.cm || !d.current) return;
+    d.views = d.views || {};
+    d.views[d.current] = { sel: d.cm.listSelections(), scroll: d.cm.getScrollInfo(), history: d.cm.getHistory() };
+  }
+  function restoreView(d, file) {
+    const v = d.views && d.views[file];
+    if (!d.cm || !v) return;
+    try {
+      d.cm.setHistory(v.history);
+      d.cm.setSelections(v.sel, undefined, { scroll: false });
+      d.cm.refresh();
+      d.cm.scrollTo(v.scroll.left, v.scroll.top);
+    } catch { /* the file changed under us (reset): start at the top */ }
+  }
+
   async function openFile(d, file, forceReload = false) {
     if (!file) return;
     if (d.current && !isTestKey(d.current)) d.buffers[d.current] = editorValue(d);
+    saveView(d);
+    if (forceReload && d.views) delete d.views[file];
     d.current = file;
     if (!d.open.includes(file)) d.open.push(file);
     const test = isTestKey(file);
@@ -1085,6 +1105,7 @@
     }
     if (d.cm) d.cm.setOption("readOnly", test);
     setEditorValue(d, text);
+    restoreView(d, file);
     drawFileTabs(d);
     if (d.cm) d.cm.focus();
   }
