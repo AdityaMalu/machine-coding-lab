@@ -1,0 +1,7 @@
+A build task: keyword matching by whole words, a strike window that auto-blocks repeat offenders, and per-user locking.
+
+- **Whole-word, case-insensitive matching.** Text and keywords go through the same `tokens()`: lower-case, split on anything that isn't a letter or digit. A keyword matches when its token sequence appears in the text's tokens, so "bad deal" matches "BAD, deal!" but "bad" doesn't match "badminton". Joining with single spaces and padding both sides (`" " + k + " "`) turns this into a plain substring check.
+- **Keywords are stored normalized**, so adding "Bad   Deal" and removing "bad deal" refer to the same entry. A phrase with no words is rejected.
+- **Blocks.** A block is a `blockedUntil` timestamp: a duration of 0 or less means permanent (`Long.MAX_VALUE`), and the addition saturates instead of overflowing. Blocked means `now < blockedUntil`, so the block ends exactly at its expiry time.
+- **Strikes.** Each rejected submission adds a timestamp; strikes older than the window are pruned (`t + window <= now`). Reaching the limit auto-blocks the user and clears their strikes. Accepted posts and posts from blocked users add no strikes. Unblocking clears everything.
+- **Concurrency.** Each user's state is created once in a `ConcurrentHashMap`, and updates lock only *that user*, so different users never wait on each other. Matching doesn't touch shared state and runs outside the lock.

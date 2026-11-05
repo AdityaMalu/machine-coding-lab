@@ -1,0 +1,8 @@
+Six separate bugs: four stop the app from starting, two are behaviour bugs once it runs. Each fix is small; the skill is reading Spring's startup report and knowing which tool fits.
+
+1. **Circular dependency** (`InventoryService` ⇄ `OrderService`). Spring Boot refuses cycles. Inventory now *publishes* a `StockReplenished` event through `ApplicationEventPublisher`, and `OrderService.onRestock` is an `@EventListener`. Inventory no longer knows who reacts to a restock, so the cycle is gone (the spec asks for exactly this).
+2. **Two `PaymentGateway` beans.** `@Profile("!dev")` on `CardGateway` and `@Profile("dev")` on `FakeGateway`: in any profile exactly one exists, so injection is unambiguous.
+3. **`ShopProperties` is never a bean.** `@ConfigurationPropertiesScan` on the application registers the record. The properties file also had to match the record and its validation: `max-items` → `max-items-per-order` (kebab-case of `maxItemsPerOrder`), `inr` → `INR` (3 upper-case letters).
+4. **Two `TaxCalculator`s.** With `proxyBeanMethods = false`, calling `taxCalculator(...)` inside another `@Bean` method just runs it again. Taking `TaxCalculator` as a method parameter makes Spring inject the single bean, so the quoter and printer share it.
+5. **Shared order history.** `OrderAudit` is prototype-scoped, but injecting it into a singleton happens once. `ObjectProvider<OrderAudit>.getObject()` per order gives each order its own audit.
+6. **Overselling under concurrency.** "Check stock, then `put`" is two steps, so 30 threads can all see 1 apple left. `computeIfPresent` runs the check and the decrement as one atomic step per sku, so exactly 10 sales succeed.

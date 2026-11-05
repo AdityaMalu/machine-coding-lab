@@ -218,6 +218,12 @@ public class LabServer {
                 send(ex, 200, "application/json", projectDetail(id(parts[1]), lang(q.get("lang"))));
             } else if (parts[0].equals("tests") && parts.length == 2 && method.equals("GET")) {
                 send(ex, 200, "application/json", testsJson(id(parts[1]), lang(q.get("lang"))));
+            } else if (parts[0].equals("file") && method.equals("GET") && "why".equals(q.get("area"))) {
+                // notes on why the reference solution works, shown next to its diff (a language may override them)
+                String id = id(q.get("project"));
+                Path own = langRoot(id, lang(q.get("lang"))).resolve("SOLUTION.md");
+                Path notes = Files.exists(own) ? own : projects.resolve(id).resolve("SOLUTION.md");
+                send(ex, 200, "text/plain; charset=utf-8", Files.exists(notes) ? Files.readString(notes) : "");
             } else if (parts[0].equals("file") && method.equals("GET")) {
                 String area = q.getOrDefault("area", hosted ? "starter" : "workspace");
                 if (hosted && area.equals("workspace")) throw new IllegalArgumentException("no workspace on the hosted site");
@@ -1824,7 +1830,9 @@ public class LabServer {
         for (javax.tools.Diagnostic<? extends javax.tools.JavaFileObject> d : diags.getDiagnostics()) {
             if (d.getKind() != javax.tools.Diagnostic.Kind.ERROR) continue;
             String file = d.getSource() == null ? "" : Paths.get(d.getSource().toUri()).toString();
-            sb.append(file).append(':').append(d.getLineNumber()).append(": error: ")
+            sb.append(file).append(':').append(d.getLineNumber());
+            if (d.getColumnNumber() > 0) sb.append(':').append(d.getColumnNumber()); // for the editor's red underline
+            sb.append(": error: ")
                     .append(d.getMessage(java.util.Locale.ENGLISH)).append('\n');
         }
         return sb.length() == 0 ? "compilation failed" : sb.toString();

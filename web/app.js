@@ -393,6 +393,7 @@
       d.dirty.clear();
       d.open = d.open.filter((f) => isTestKey(f) || info.workspace.includes(f));
       for (const f of info.workspace) d.buffers[f] = await loadFile(d, f);
+      setDiagnostics(d, []);
       await openFile(d, d.current, true);
       drawFileTabs(d);
       d.hash = codeHash(d);
@@ -533,9 +534,67 @@
         body.querySelector("#runSolution").addEventListener("click", () => runTests(d, "solution"));
         return;
       }
-      body.innerHTML = "";
-      for (const f of d.info.solution) await appendCode(body, d.project.id, "solution", f);
+      await renderSolution(d, body);
     }
+  }
+
+  /**
+   * The reference solution as a review: what changed from the starter (or from your code) and notes on why
+   * those changes make the tests pass.
+   */
+  async function renderSolution(d, body) {
+    const base = d.solutionBase || "starter";
+    const full = !!d.solutionFull;
+    body.innerHTML = `<div class="sol-bar">
+        <div class="seg" role="group" aria-label="Compare the solution with">
+          <button data-base="starter" class="${base === "starter" ? "on" : ""}">Starter → solution</button>
+          <button data-base="mine" class="${base === "mine" ? "on" : ""}">Your code → solution</button>
+        </div>
+        <label class="small"><input type="checkbox" id="solFull" ${full ? "checked" : ""}> Whole files</label>
+        <button class="btn ghost small" id="runSolution2">Run tests on solution</button>
+      </div>
+      <div id="solWhy"></div><div id="solFiles"><p class="muted"><span class="spinner"></span> Comparing files...</p></div>`;
+    body.querySelectorAll("[data-base]").forEach((b) => b.addEventListener("click", () => {
+      d.solutionBase = b.dataset.base;
+      renderSolution(d, body);
+    }));
+    body.querySelector("#solFull").addEventListener("change", (e) => { d.solutionFull = e.target.checked; renderSolution(d, body); });
+    body.querySelector("#runSolution2").addEventListener("click", () => runTests(d, "solution"));
+
+    const pid = d.project.id;
+    const why = await api(`/api/file?project=${pid}&${langQ()}&area=why`).catch(() => "");
+    if (why && why.trim()) {
+      body.querySelector("#solWhy").innerHTML = `<details class="sol-why" open><summary>Why this is the solution</summary>
+        ${["java", "spring"].includes(state.lang) ? "" : `<p class="muted small">The notes use Java names; the same ideas apply to the ${esc(state.lang === "cpp" ? "C++" : state.lang[0].toUpperCase() + state.lang.slice(1))} code below.</p>`}
+        <article class="markdown">${renderMarkdown(why)}</article></details>`;
+    }
+    if (d.current && !isTestKey(d.current)) d.buffers[d.current] = editorValue(d);
+    const views = await Promise.all(d.info.solution.map(async (f) => {
+      const sol = await api(`/api/file?project=${pid}&${langQ()}&area=solution&path=${encodeURIComponent(f)}`);
+      let old = null;
+      if (base === "starter") old = await api(`/api/file?project=${pid}&${langQ()}&area=starter&path=${encodeURIComponent(f)}`).catch(() => null);
+      else if (d.info.workspace.includes(f)) old = d.buffers[f] !== undefined ? d.buffers[f] : await loadFile(d, f).catch(() => null);
+      const rows = window.LabDiff.lines(old ?? "", sol);
+      const r = window.LabDiff.render(rows, { full });
+      return { f, isNew: old === null, changed: r.added + r.removed > 0, ...r };
+    }));
+    const changed = views.filter((v) => v.changed), same = views.filter((v) => !v.changed);
+    const files = body.querySelector("#solFiles");
+    const label = base === "starter" ? "the starter" : "your code";
+    files.innerHTML = `<p class="muted small">${changed.length} of ${views.length} files differ from ${label}.
+        <span class="legend"><span class="lg del">removed</span><span class="lg add">added</span></span></p>`
+      + changed.map((v) => `<div class="code-view diff-view" data-file="${esc(v.f)}">
+          <h4><span>${esc(v.f)}</span>${v.isNew ? '<span class="chip">new file</span>' : ""}
+          <span class="dstat"><span class="plus">+${v.added}</span> <span class="minus">−${v.removed}</span></span></h4>
+          <div class="diff"><div class="diff-inner">${v.html}</div></div></div>`).join("")
+      + (same.length ? `<p class="muted small">Same as ${label}: ${same.map((v) => `<code>${esc(v.f)}</code>`).join(", ")}</p>` : "");
+    files.addEventListener("click", (e) => {
+      const fold = e.target.closest("[data-fold]");
+      if (!fold) return;
+      const tpl = fold.nextElementSibling;
+      fold.replaceWith(tpl.content);
+      tpl.remove();
+    });
   }
 
   async function appendCode(container, id, area, file) {
@@ -588,6 +647,14 @@
     const body = document.getElementById("resultsBody");
     const parts = [];
     if (d.compileError) {
+      if (d.problems && d.problems.length) {
+        parts.push(`<div class="problems"><div class="problems-head">Problems <span class="tree-count">${d.problems.length}</span></div>`
+          + d.problems.map((p, i) => `<button class="problem" data-problem="${i}" title="Go to ${esc(p.file)}:${p.line}">
+              <span class="perr ${p.severity}">${p.severity === "warning" ? "⚠" : "⊗"}</span>
+              <span class="pmsg">${esc(p.message.split("\n")[0])}</span>
+              <span class="ploc">${esc(fileName(p.file))}:${p.line}${p.col ? ":" + p.col : ""}</span></button>`).join("")
+          + "</div>");
+      }
       parts.push('<pre class="compile-out" id="compileOut"></pre>');
     }
     const multipleSuites = new Set(d.tests.map((t) => t.suite)).size > 1;
@@ -615,6 +682,7 @@
     }
     body.innerHTML = parts.join("");
     if (d.compileError) body.querySelector("#compileOut").textContent = d.compileError;
+    body.querySelectorAll("[data-problem]").forEach((b) => b.addEventListener("click", () => goToProblem(d, d.problems[+b.dataset.problem])));
 
     body.querySelectorAll(".test-row").forEach((row) => {
       const key = row.dataset.key;
@@ -714,8 +782,9 @@
           "Shift-Cmd-Enter": () => runFailed(d),
         },
       });
-      d.cm.on("change", () => markDirty(d));
+      d.cm.on("change", () => { markDirty(d); scheduleLiveCheck(d); });
       setupCodeIntel(d);
+      setupDiagnosticTips(d);
     } else {
       ta.classList.add("fallback");
       ta.spellcheck = false;
@@ -964,8 +1033,10 @@
       const key = keyPrefix === TEST_KEY ? TEST_KEY + f : f;
       const active = key === d.current ? " active" : "";
       const dirty = d.dirty.has(key) ? '<span class="dirty" title="Unsaved changes">●</span>' : "";
-      out.push(`<button class="tree-row file${active}" data-file="${esc(key)}" style="--depth:${depth}" title="${esc(f)}">
-        <span class="chev"></span>${fileIcon(f)}<span class="tname">${esc(fileName(f))}</span>${dirty}</button>`);
+      const errs = (d.diags && d.diags[key] || []).length;
+      const err = errs ? `<span class="err-count" title="${errs} compile ${errs === 1 ? "error" : "errors"}">${errs}</span>` : "";
+      out.push(`<button class="tree-row file${active}${errs ? " has-error" : ""}" data-file="${esc(key)}" style="--depth:${depth}" title="${esc(f)}">
+        <span class="chev"></span>${fileIcon(f)}<span class="tname">${esc(fileName(f))}</span>${dirty}${err}</button>`);
     }
     return out.join("");
   }
@@ -1000,7 +1071,7 @@
     tabs.innerHTML = d.open.map((f) => {
       const test = isTestKey(f);
       const path = test ? f.slice(TEST_KEY.length) : f;
-      return `<div class="ftab${f === d.current ? " active" : ""}${test ? " readonly" : ""}" data-file="${esc(f)}" title="${esc((test ? "tests/" : "") + path)}${test ? " (read-only)" : ""}">
+      return `<div class="ftab${f === d.current ? " active" : ""}${test ? " readonly" : ""}${(d.diags && d.diags[f] || []).length ? " has-error" : ""}" data-file="${esc(f)}" title="${esc((test ? "tests/" : "") + path)}${test ? " (read-only)" : ""}">
         ${fileIcon(path)}<span class="ftab-name">${esc(fileName(path))}</span>${test ? '<span class="lock" aria-label="read-only">🔒</span>' : ""}${d.dirty.has(f) ? '<span class="dirty">●</span>' : ""}
         <button class="ftab-close" title="Close" aria-label="Close ${esc(fileName(path))}">×</button></div>`;
     }).join("");
@@ -1067,9 +1138,118 @@
     });
   }
 
+  // ------------------------------------------------------------ red squiggles (compile errors + live bracket check)
+  // Compile errors come from the last run's compiler output; they stay on their code as you edit (CodeMirror
+  // marks move with the text) until the next run. Bracket problems are checked in the browser as you type.
+
+  function setDiagnostics(d, list) {
+    if (d.cm) syncDiagnostics(d); // drop the old marks
+    d.diags = {};
+    for (const p of list) (d.diags[p.file] = d.diags[p.file] || []).push(p);
+    d.problems = list;
+    applyDiagnostics(d);
+    drawFileTabs(d);
+  }
+
+  /** Clears the open file's marks, first copying where they moved to back into the diagnostics. */
+  function syncDiagnostics(d) {
+    for (const m of d.marks || []) {
+      const at = m.mark.find();
+      if (at) { m.diag.line = at.from.line + 1; m.diag.col = at.from.ch + 1; }
+      m.mark.clear();
+      if (m.gutter) d.cm.removeLineClass(m.gutter, "gutter", "cm-err-gutter");
+    }
+    d.marks = [];
+  }
+
+  function applyDiagnostics(d) {
+    if (!d.cm) return;
+    syncDiagnostics(d);
+    if (!d.current || isTestKey(d.current) || !d.diags) return;
+    const cm = d.cm;
+    for (const diag of d.diags[d.current] || []) {
+      const line = Math.min(Math.max(0, diag.line - 1), cm.lineCount() - 1);
+      const text = cm.getLine(line);
+      const indent = text.search(/\S|$/);
+      let from = diag.col ? Math.min(diag.col - 1, text.length) : indent;
+      let to;
+      if (!diag.col && /expected/i.test(diag.message) && text.trim()) {
+        // "';' expected" without a column: the missing piece belongs after the last token on the line
+        const end = text.replace(/\s+$/, "").length;
+        const last = text.slice(0, end).match(/[\w$]+$|\S$/);
+        from = end - (last ? last[0].length : 1);
+        to = end;
+      } else if (!diag.col) to = text.length; // no column: underline the whole statement
+      else {
+        const word = text.slice(from).match(/^[\w$]+/);
+        to = word ? from + word[0].length : from + 1;
+        if (to > text.length) { from = Math.max(indent, text.length - 1); to = text.length; } // "expected ';'" points past the end
+      }
+      if (to <= from) { from = indent; to = Math.max(text.length, indent + 1); }
+      const mark = cm.markText({ line, ch: from }, { line, ch: to }, {
+        className: "cm-squiggle" + (diag.severity === "warning" ? " warn" : ""),
+        attributes: { "data-msg": diag.message },
+        clearWhenEmpty: false,
+        inclusiveRight: true,
+      });
+      const gutter = cm.addLineClass(line, "gutter", "cm-err-gutter");
+      d.marks.push({ mark, diag, gutter });
+    }
+  }
+
+  /** Bracket check while you type, after a short pause. */
+  function scheduleLiveCheck(d, delay = 350) {
+    clearTimeout(d.liveTimer);
+    d.liveTimer = setTimeout(() => {
+      if (!d.cm || !window.LabDiff) return;
+      for (const m of d.liveMarks || []) m.clear();
+      d.liveMarks = [];
+      if (!d.current || isTestKey(d.current)) return;
+      for (const p of window.LabDiff.liveCheck(d.cm)) {
+        d.liveMarks.push(d.cm.markText({ line: p.line, ch: p.col }, { line: p.line, ch: p.endCol },
+          { className: "cm-squiggle live", attributes: { "data-msg": p.message + "\n(checked as you type)" } }));
+      }
+    }, delay);
+  }
+
+  /** Hovering a squiggle shows its message, like an editor's hover. */
+  function setupDiagnosticTips(d) {
+    let tip = document.getElementById("diagTip");
+    if (!tip) {
+      tip = document.createElement("div");
+      tip.id = "diagTip";
+      tip.className = "diag-tip";
+      tip.hidden = true;
+      document.body.appendChild(tip);
+    }
+    const wrap = d.cm.getWrapperElement();
+    wrap.addEventListener("mousemove", (e) => {
+      const el = e.target.closest && e.target.closest(".cm-squiggle");
+      if (!el) { tip.hidden = true; return; }
+      tip.textContent = el.dataset.msg || "";
+      tip.hidden = false;
+      const x = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 8);
+      const y = e.clientY + 18 + tip.offsetHeight > innerHeight ? e.clientY - tip.offsetHeight - 10 : e.clientY + 18;
+      tip.style.left = Math.max(8, x) + "px";
+      tip.style.top = y + "px";
+    });
+    wrap.addEventListener("mouseleave", () => { tip.hidden = true; });
+  }
+
+  async function goToProblem(d, p) {
+    if (!p) return;
+    await openFile(d, p.file);
+    if (!d.cm) return;
+    const pos = { line: p.line - 1, ch: Math.max(0, (p.col || 1) - 1) };
+    d.cm.setCursor(pos);
+    d.cm.scrollIntoView(pos, 120);
+    d.cm.focus();
+  }
+
   /** Remember where you were in the open file (cursor, selection, scroll, undo history), like an editor does. */
   function saveView(d) {
     if (!d.cm || !d.current) return;
+    syncDiagnostics(d);
     d.views = d.views || {};
     d.views[d.current] = { sel: d.cm.listSelections(), scroll: d.cm.getScrollInfo(), history: d.cm.getHistory() };
   }
@@ -1106,6 +1286,8 @@
     if (d.cm) d.cm.setOption("readOnly", test);
     setEditorValue(d, text);
     restoreView(d, file);
+    applyDiagnostics(d);
+    scheduleLiveCheck(d, 0);
     drawFileTabs(d);
     if (d.cm) d.cm.focus();
   }
@@ -1164,7 +1346,9 @@
       d.lastRun = r.phase === "compile" ? null : { millis: r.millis, timing: r.timing };
       if (r.phase === "compile") {
         d.compileError = r.output;
+        setDiagnostics(d, window.LabDiff.parseDiagnostics(r.output, d.info.workspace));
       } else {
+        setDiagnostics(d, []);
         const seen = new Set();
         for (const t of r.results) {
           const key = `${t.suite}#${t.method}`;

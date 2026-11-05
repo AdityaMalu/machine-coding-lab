@@ -1,0 +1,6 @@
+Four bugs, all about time, threads and thread-local state.
+
+1. **Sent twice, or never.** The job marked a reminder SENT *before* delivering it: two overlapping runs could both pick it, and a failed delivery was lost for good. Now `store.claim(id)` moves it PENDING → SENDING in one atomic step (only one run wins), and `ReminderService.deliver` marks it SENT only after the provider accepted it, or releases it back to PENDING so the next run retries.
+2. **Wrong customer's brand.** `TenantContext` is a `ThreadLocal`. Work handed to the executor ran on a pool thread that had a stale tenant, or none. `setTaskDecorator(TenantContext::propagate)` copies the submitter's tenant into the task and clears it afterwards. `TenantFilter` now clears the tenant in `finally`, because servlet threads are pooled and the next request on that thread belongs to someone else.
+3. **Lost during the Monday 9:00 burst.** The small executor's queue filled up and the default policy threw tasks away. `CallerRunsPolicy` makes the scheduler thread do the work itself when the queue is full: slower, but nothing is dropped (backpressure).
+4. **Late or missing at the exact due time.** `dueAt.isBefore(now)` skips reminders due *exactly* now; `!dueAt.isAfter(now)` includes them. The job also uses the injected `Clock` instead of `Instant.now()`, so tests (and the boundary) are deterministic.

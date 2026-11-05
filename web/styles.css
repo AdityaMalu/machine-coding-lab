@@ -386,3 +386,47 @@ dialog.iv-report label { display: flex; gap: 8px; align-items: center; margin: 1
 .ai-field select, .ai-field input { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; }
 .ai-field input { font-family: var(--mono); }
 .ai-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 2px; }
+
+/* ---------- red squiggles, hover messages and the Problems list (like VS Code) */
+.cm-squiggle { text-decoration: underline wavy var(--fail); text-decoration-skip-ink: none; text-underline-offset: 3px; text-decoration-thickness: 1.5px; }
+.cm-squiggle.warn { text-decoration-color: var(--medium); }
+.cm-err-gutter .CodeMirror-linenumber { color: var(--fail) !important; font-weight: 700; }
+.diag-tip { position: fixed; z-index: 1000; max-width: min(520px, 90vw); background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  border-left: 3px solid var(--fail); border-radius: 6px; padding: 6px 10px; font: 12px/1.45 var(--mono); white-space: pre-wrap; box-shadow: var(--shadow); pointer-events: none; }
+.tree-row.has-error .tname, .ftab.has-error .ftab-name { color: var(--fail); }
+.err-count { margin-left: auto; min-width: 16px; text-align: center; background: var(--fail); color: #fff; border-radius: 8px; font: 700 10px/16px var(--sans); padding: 0 5px; }
+.problems { margin: 8px 14px 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.problems-head { padding: 6px 10px; font: 600 12px var(--sans); color: var(--muted); background: var(--surface-2); text-transform: uppercase; letter-spacing: .04em; }
+.problem { display: flex; gap: 8px; align-items: baseline; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--border);
+  padding: 6px 10px; font: 12px/1.45 var(--mono); color: var(--text); cursor: pointer; }
+.problem:hover { background: var(--surface-2); }
+.perr { color: var(--fail); } .perr.warning { color: var(--medium); }
+.pmsg { flex: 1; min-width: 0; }
+.ploc { color: var(--muted); white-space: nowrap; }
+
+/* ---------- solution as a diff */
+.sol-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+.sol-bar .btn.small { padding: 5px 10px; font-size: 12px; margin-left: auto; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { background: none; border: 0; padding: 5px 10px; font: 12px var(--sans); color: var(--muted); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.sol-why { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; padding: 8px 14px; margin-bottom: 16px; background: var(--surface-2); }
+.sol-why summary { cursor: pointer; font-weight: 600; }
+.sol-why .markdown { margin-top: 6px; }
+.diff-view h4 { display: flex; gap: 8px; align-items: center; }
+.dstat { margin-left: auto; font-weight: 600; }
+.dstat .plus, .lg.add { color: var(--pass); } .dstat .minus, .lg.del { color: var(--fail); }
+.legend { margin-left: 8px; } .lg { margin-right: 8px; } .lg::before { content: "■ "; }
+.diff { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; font: 12.5px/1.55 var(--mono); padding: 6px 0; }
+.diff-inner { width: max-content; min-width: 100%; }
+.dl { white-space: pre; padding-right: 14px; }
+.dl .ln { display: inline-block; width: 3em; text-align: right; padding-right: .5em; color: var(--muted); opacity: .6; user-select: none; }
+.dl .sg { display: inline-block; width: 1.5em; text-align: center; user-select: none; color: var(--muted); }
+.dl.add { background: rgba(60, 207, 152, .13); } .dl.add .sg { color: var(--pass); font-weight: 700; }
+.dl.del { background: rgba(255, 123, 110, .13); } .dl.del .sg { color: var(--fail); font-weight: 700; }
+.dl.add mark { background: rgba(60, 207, 152, .38); color: inherit; border-radius: 2px; }
+.dl.del mark { background: rgba(255, 123, 110, .42); color: inherit; border-radius: 2px; }
+.dl.fold { display: block; width: 100%; text-align: left; background: var(--surface-2); color: var(--muted); border: 0; border-block: 1px dashed var(--border);
+  padding: 2px 14px 2px 5em; font: inherit; cursor: pointer; }
+.dl.fold:hover { color: var(--text); }
